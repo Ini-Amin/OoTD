@@ -1,180 +1,286 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { pushState } from '$app/navigation';
+	import { page } from '$app/state';
 	import { apiBase, previewOutfits, type Outfit } from '$lib/outfits';
 	import OutfitCard from '$lib/OutfitCard.svelte';
-	import { saved } from '$lib/saved.svelte';
-	import { styles } from '$lib/styles.svelte';
+	import OutfitViewer from '$lib/OutfitViewer.svelte';
 
 	let outfits = $state<Outfit[]>(previewOutfits);
+	let interpreted = $state<{
+		styles?: string[];
+		categories?: string[];
+		words?: string[];
+	} | null>(null);
 	let feedSource = $state<'preview' | 'api'>('preview');
+	let loading = $state(false);
 	let requestSeq = 0;
+	let dialogEl = $state<HTMLDivElement | null>(null);
 
-	function filterPreview(pickedSlugs: string[]): Outfit[] {
-		if (pickedSlugs.length === 0) {
-			return previewOutfits.map((o) => ({ ...o, match: 0 }));
-		}
-		const pickedSet = new Set(pickedSlugs.map((s) => s.trim().toLowerCase()).filter(Boolean));
-		const scored = previewOutfits.map((o) => {
-			const match = o.tags.reduce((acc, tag) => {
-				const slug = tag.toLowerCase().replace(/\s+/g, '-');
-				return acc + (pickedSet.has(slug) ? 1 : 0);
-			}, 0);
-			return { ...o, match };
+	let q = $derived(page.url.searchParams.get('q')?.trim() ?? '');
+
+	function filterPreview(query: string): Outfit[] {
+		const lower = query.toLowerCase();
+		const tokens = lower.split(/\s+/).filter(Boolean);
+		if (tokens.length === 0) return previewOutfits;
+		return previewOutfits.filter((o) => {
+			const text = `${o.title} ${o.caption} ${o.tags.join(' ')}`.toLowerCase();
+			return text.includes(lower) || tokens.some((token) => text.includes(token));
 		});
-		return scored
-			.filter((o) => (o.match ?? 0) > 0)
-			.sort((a, b) => (b.match ?? 0) - (a.match ?? 0));
 	}
 
-	onMount(() => {
-		saved.init();
-		styles.init(apiBase);
+	$effect(() => {
+		const currentQ = q;
+		const seq = ++requestSeq;
+		loading = true;
+
+		if (!currentQ) {
+			interpreted = null;
+			fetch(`${apiBase}/v1/outfits`)
+				.then(async (res) => {
+					if (!res.ok) throw new Error('API request failed');
+					const data = (await res.json()) as { outfits?: Outfit[] };
+					if (seq !== requestSeq) return;
+					outfits = Array.isArray(data.outfits) ? data.outfits : [];
+					feedSource = 'api';
+					loading = false;
+				})
+				.catch(() => {
+					if (seq !== requestSeq) return;
+					outfits = previewOutfits;
+					feedSource = 'preview';
+					loading = false;
+				});
+		} else {
+			fetch(`${apiBase}/v1/search?q=${encodeURIComponent(currentQ)}`)
+				.then(async (res) => {
+					if (!res.ok) throw new Error('API request failed');
+					const data = (await res.json()) as {
+						outfits?: Outfit[];
+						interpreted?: { styles?: string[]; categories?: string[]; words?: string[] };
+					};
+					if (seq !== requestSeq) return;
+					outfits = Array.isArray(data.outfits) ? data.outfits : [];
+					interpreted = data.interpreted ?? null;
+					feedSource = 'api';
+					loading = false;
+				})
+				.catch(() => {
+					if (seq !== requestSeq) return;
+					outfits = filterPreview(currentQ);
+					interpreted = null;
+					feedSource = 'preview';
+					loading = false;
+				});
+		}
 	});
 
-	$effect(() => {
-		const currentPicked = [...styles.picked];
-		const seq = ++requestSeq;
+	function handleOpen(id: string): void {
+		pushState('/o/' + id, { outfitId: id });
+	}
 
-		let url = `${apiBase}/v1/outfits`;
-		if (currentPicked.length > 0) {
-			const query = currentPicked.map((slug) => encodeURIComponent(slug)).join(',');
-			url += `?styles=${query}`;
+	function handleBackdropClick(event: MouseEvent): void {
+		if (event.target === event.currentTarget) {
+			history.back();
 		}
+	}
 
-		fetch(url)
-			.then(async (res) => {
-				if (!res.ok) throw new Error('API request failed');
-				const data = (await res.json()) as { outfits?: Outfit[] };
-				if (seq !== requestSeq) return;
-				outfits = Array.isArray(data.outfits) ? data.outfits : [];
-				feedSource = 'api';
-			})
-			.catch(() => {
-				if (seq !== requestSeq) return;
-				outfits = filterPreview(currentPicked);
-				feedSource = 'preview';
-			});
+	function handleDialogKeyDown(event: KeyboardEvent): void {
+		if (event.key === 'Escape') {
+			event.preventDefault();
+			history.back();
+			return;
+		}
+		// ponytail: basic focus trap; upgrade to floating-ui or svelte-focus-trap if complex modals needed.
+		if (event.key === 'Tab' && dialogEl) {
+			const focusable = dialogEl.querySelectorAll<HTMLElement>(
+				'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+			);
+			if (focusable.length > 0) {
+				const first = focusable[0];
+				const last = focusable[focusable.length - 1];
+				if (event.shiftKey && document.activeElement === first) {
+					event.preventDefault();
+					last.focus();
+				} else if (!event.shiftKey && document.activeElement === last) {
+					event.preventDefault();
+					first.focus();
+				}
+			}
+		}
+	}
+
+	$effect(() => {
+		if (page.state.outfitId) {
+			dialogEl?.focus();
+			const prevOverflow = document.body.style.overflow;
+			document.body.style.overflow = 'hidden';
+			return () => {
+				document.body.style.overflow = prevOverflow;
+			};
+		}
 	});
 </script>
 
 <svelte:head>
-	<title>OoTD — Your style, your space</title>
-	<meta
-		name="description"
-		content="Discover real outfits, save inspiration, and share your personal style on OoTD."
-	/>
+	<title>{q ? `${q} — Search OoTD` : 'OoTD — Your style, your space'}</title>
 </svelte:head>
 
+<svelte:window
+	onkeydown={(e) => {
+		if (page.state.outfitId && e.key === 'Escape') {
+			e.preventDefault();
+			history.back();
+		}
+	}}
+/>
+
 <main class="page-container">
-	<section class="intro" aria-label="Introduction">
-		<div class="intro-main">
-			<p class="eyebrow">Creator-first fashion discovery</p>
-			<h1>Your style has a home.</h1>
-			<p class="intro-copy">
-				Find outfits from real people. Save ideas, follow creators, and make your profile feel like you.
-			</p>
+	{#if q}
+		<div class="search-meta">
+			<div class="search-header-row">
+				<h1 class="results-line">Results for &ldquo;{q}&rdquo;</h1>
+				<a href="/" class="clear-link">Clear</a>
+			</div>
+			{#if interpreted && ((interpreted.styles && interpreted.styles.length > 0) || (interpreted.categories && interpreted.categories.length > 0) || (interpreted.words && interpreted.words.length > 0))}
+				<div class="interpreted-chips">
+					{#each interpreted.styles ?? [] as s}
+						<span class="chip chip-style">{s}</span>
+					{/each}
+					{#each interpreted.categories ?? [] as c}
+						<span class="chip chip-category">{c}</span>
+					{/each}
+					{#each interpreted.words ?? [] as w}
+						<span class="chip chip-word">{w}</span>
+					{/each}
+				</div>
+			{/if}
 		</div>
+	{/if}
+
+	{#if outfits.length === 0 && !loading}
+		<div class="empty-state">
+			<p>Nothing matched. Try a style (vintage, y2k), a piece (sneakers, tote) or a mood.</p>
+		</div>
+	{:else}
+		<div class="masonry-grid">
+			{#each outfits as outfit (outfit.id)}
+				<OutfitCard {outfit} onopen={handleOpen} />
+			{/each}
+		</div>
+	{/if}
+
+	<footer class="page-footer">
 		<p class:connected={feedSource === 'api'} class="data-status">
 			<span aria-hidden="true">●</span>
 			{feedSource === 'api' ? 'Live from Go API' : 'Local preview data'}
 		</p>
-	</section>
-
-	<section class="chips-row" aria-label="Filter by style">
-		{#each styles.available as s (s.slug)}
-			{@const active = styles.picked.includes(s.slug)}
-			<button
-				type="button"
-				class="chip"
-				class:selected={active}
-				aria-pressed={active}
-				onclick={() => styles.toggle(s.slug)}
-			>
-				{s.name}
-			</button>
-		{/each}
-		{#if styles.picked.length > 0}
-			<button
-				type="button"
-				class="clear-button"
-				onclick={() => styles.clear()}
-			>
-				Clear
-			</button>
-		{/if}
-	</section>
-
-	<section class="feed-section" aria-label="Outfits feed">
-		{#if outfits.length === 0}
-			<div class="empty-state">
-				<p class="empty-message">No looks match these styles yet.</p>
-				{#if styles.picked.length > 0}
-					<button
-						type="button"
-						class="empty-clear-button"
-						onclick={() => styles.clear()}
-					>
-						Clear
-					</button>
-				{/if}
-			</div>
-		{:else}
-			<div class="masonry">
-				{#each outfits as outfit (outfit.id)}
-					<OutfitCard {outfit} />
-				{/each}
-			</div>
-		{/if}
-	</section>
+	</footer>
 </main>
+
+{#if page.state.outfitId}
+	<div
+		class="modal-backdrop"
+		role="presentation"
+		tabindex="-1"
+		onclick={handleBackdropClick}
+		onkeydown={(e) => e.key === 'Escape' && history.back()}
+	>
+		<div
+			class="modal-dialog"
+			role="dialog"
+			aria-modal="true"
+			aria-label="Outfit viewer"
+			tabindex="-1"
+			bind:this={dialogEl}
+			onkeydown={handleDialogKeyDown}
+		>
+			<OutfitViewer id={page.state.outfitId} onclose={() => history.back()} />
+		</div>
+	</div>
+{/if}
 
 <style>
 	.page-container {
-		width: min(1180px, calc(100% - 2.5rem));
+		width: 100%;
+		max-width: 1440px;
 		margin: 0 auto;
-		padding: 0 0 4rem;
+		padding: 0.5rem 1.5rem 3rem;
+	}
+
+	.search-meta {
 		display: flex;
 		flex-direction: column;
-		gap: 1.75rem;
+		gap: 0.5rem;
+		margin-bottom: 1.25rem;
+		padding-bottom: 0.75rem;
+		border-bottom: 1px solid var(--t-line);
 	}
 
-	.intro {
+	.search-header-row {
 		display: flex;
-		align-items: flex-start;
+		align-items: baseline;
 		justify-content: space-between;
-		gap: 1.5rem;
-		flex-wrap: wrap;
-		padding: 1.5rem 0 0.25rem;
+		gap: 1rem;
 	}
 
-	.intro-main {
-		max-width: 40rem;
-	}
-
-	.eyebrow {
-		font-size: 0.72rem;
-		font-weight: 400;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		color: var(--t-muted);
-		margin: 0 0 0.45rem;
-	}
-
-	h1 {
-		font-size: 2.15rem;
-		font-weight: 300;
-		line-height: 1.15;
-		letter-spacing: -0.03em;
-		color: var(--t-fg);
-		margin: 0 0 0.6rem;
-	}
-
-	.intro-copy {
-		font-size: 0.92rem;
-		font-weight: 350;
-		line-height: 1.5;
-		color: var(--t-muted);
+	.results-line {
 		margin: 0;
+		font-size: 0.95rem;
+		font-weight: 450;
+		color: var(--t-fg);
+	}
+
+	.clear-link {
+		font-size: 0.8rem;
+		color: var(--t-muted);
+		text-decoration: underline;
+		text-underline-offset: 2px;
+		transition: color 0.15s ease;
+	}
+
+	.clear-link:hover {
+		color: var(--t-fg);
+	}
+
+	.interpreted-chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.35rem;
+	}
+
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		font-size: 0.72rem;
+		padding: 0.15rem 0.55rem;
+		border-radius: 999px;
+		background: var(--t-tint);
+		border: 1px solid var(--t-line);
+		color: var(--t-muted);
+		line-height: 1.3;
+		user-select: none;
+	}
+
+	.empty-state {
+		padding: 4rem 1rem;
+		text-align: center;
+		color: var(--t-muted);
+		font-size: 0.92rem;
+		max-width: 480px;
+		margin: 0 auto;
+		line-height: 1.5;
+	}
+
+	.masonry-grid {
+		column-width: 11rem;
+		column-gap: 0.75rem;
+		width: 100%;
+	}
+
+	.page-footer {
+		display: flex;
+		justify-content: center;
+		padding: 3.5rem 0 1.5rem;
 	}
 
 	.data-status {
@@ -203,122 +309,34 @@
 		color: #10b981;
 	}
 
-	.chips-row {
+	.modal-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 1000;
 		display: flex;
 		align-items: center;
-		gap: 0.5rem;
-		overflow-x: auto;
-		padding: 0.25rem 0;
-		scrollbar-width: none;
-		-webkit-overflow-scrolling: touch;
+		justify-content: center;
+		background: color-mix(in srgb, var(--t-bg) 82%, transparent);
+		backdrop-filter: blur(8px);
+		-webkit-backdrop-filter: blur(8px);
+		padding: 1.5rem;
+		overflow-y: auto;
+		outline: none;
 	}
 
-	.chips-row::-webkit-scrollbar {
-		display: none;
-	}
-
-	.chip {
-		display: inline-flex;
-		align-items: center;
-		white-space: nowrap;
-		border: 1px solid var(--t-line);
-		border-radius: 999px;
-		background: var(--t-surface);
-		color: var(--t-fg);
-		padding: 0.38rem 0.9rem;
-		font-size: 0.82rem;
-		font-weight: 400;
-		line-height: 1;
-		cursor: pointer;
-		user-select: none;
-		transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
-	}
-
-	.chip:hover {
-		border-color: var(--t-fg);
-	}
-
-	.chip.selected {
-		background: var(--t-fg);
-		color: var(--t-bg);
-		border-color: var(--t-fg);
-	}
-
-	.clear-button {
-		background: transparent;
-		border: none;
-		color: var(--t-muted);
-		font-size: 0.82rem;
-		font-weight: 400;
-		padding: 0.38rem 0.6rem;
-		cursor: pointer;
-		white-space: nowrap;
-		text-decoration: underline;
-		text-underline-offset: 3px;
-		user-select: none;
-	}
-
-	.clear-button:hover {
-		color: var(--t-fg);
-	}
-
-	.feed-section {
+	.modal-dialog {
+		max-width: min(960px, 100%);
 		width: 100%;
+		outline: none;
 	}
 
-	.empty-state {
-		padding: 4rem 1rem;
-		text-align: center;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.85rem;
-	}
-
-	.empty-message {
-		font-size: 0.92rem;
-		font-weight: 350;
-		color: var(--t-muted);
-		margin: 0;
-	}
-
-	.empty-clear-button {
-		border: 1px solid var(--t-line);
-		border-radius: 999px;
-		background: var(--t-surface);
-		color: var(--t-fg);
-		font-size: 0.8rem;
-		font-weight: 400;
-		padding: 0.4rem 0.9rem;
-		cursor: pointer;
-	}
-
-	.empty-clear-button:hover {
-		border-color: var(--t-fg);
-	}
-
-	.masonry {
-		column-width: 16rem;
-		column-gap: 1.25rem;
-		width: 100%;
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.chip {
-			transition: none !important;
-			transform: none !important;
-			animation: none !important;
-		}
-	}
-
-	@media (max-width: 760px) {
+	@media (max-width: 639px) {
 		.page-container {
-			width: min(100% - 1.5rem, 1180px);
-			gap: 1.5rem;
+			padding: 0.5rem 1rem 3rem;
 		}
 
-		h1 {
-			font-size: 1.75rem;
+		.modal-backdrop {
+			padding: 0.5rem;
 		}
 	}
 </style>

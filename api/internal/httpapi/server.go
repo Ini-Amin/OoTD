@@ -12,6 +12,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+type Piece struct {
+	ID       string  `json:"id"`
+	Category string  `json:"category"`
+	Label    string  `json:"label"`
+	X        float64 `json:"x"`
+	Y        float64 `json:"y"`
+	W        float64 `json:"w"`
+	H        float64 `json:"h"`
+}
+
 type Outfit struct {
 	ID          string   `json:"id"`
 	Creator     string   `json:"creator"`
@@ -25,6 +35,7 @@ type Outfit struct {
 	ImageURL    string   `json:"imageUrl"`
 	ImageWidth  int      `json:"imageWidth"`
 	ImageHeight int      `json:"imageHeight"`
+	Pieces      []Piece  `json:"pieces,omitempty"`
 }
 
 type Tag struct {
@@ -71,6 +82,8 @@ func NewServer(db *pgxpool.Pool, allowedOrigin string) http.Handler {
 	mux.HandleFunc("GET /v1/users", s.listUsers)
 	mux.HandleFunc("GET /v1/users/{username}", s.getUser)
 	mux.HandleFunc("GET /v1/themes", s.listThemes)
+	mux.HandleFunc("GET /v1/search", s.searchOutfits)
+	mux.HandleFunc("POST /v1/requests", s.createCraftRequest)
 	return withCORS(mux, allowedOrigin)
 }
 
@@ -244,6 +257,34 @@ func (s *server) getOutfit(w http.ResponseWriter, r *http.Request) {
 		}
 		serverError(w, err)
 		return
+	}
+	pRows, err := s.db.Query(r.Context(), `
+		SELECT id::text, category, label, x, y, w, h
+		FROM outfit_pieces
+		WHERE outfit_id = $1::uuid
+		ORDER BY sort_order, id
+	`, id)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer pRows.Close()
+
+	var pieces []Piece
+	for pRows.Next() {
+		var p Piece
+		if err := pRows.Scan(&p.ID, &p.Category, &p.Label, &p.X, &p.Y, &p.W, &p.H); err != nil {
+			serverError(w, err)
+			return
+		}
+		pieces = append(pieces, p)
+	}
+	if err := pRows.Err(); err != nil {
+		serverError(w, err)
+		return
+	}
+	if len(pieces) > 0 {
+		out.Pieces = pieces
 	}
 
 	writeJSON(w, http.StatusOK, map[string]Outfit{"outfit": out})

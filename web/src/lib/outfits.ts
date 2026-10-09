@@ -1,3 +1,5 @@
+import type { Piece } from '$lib/pieces';
+
 export type Outfit = {
 	id: string;
 	creator: string;
@@ -11,6 +13,8 @@ export type Outfit = {
 	imageUrl?: string;
 	imageWidth?: number;
 	imageHeight?: number;
+	/** Tagged pieces; only present on GET /v1/outfits/{id}. */
+	pieces?: Piece[];
 };
 
 export const apiBase: string = import.meta.env.VITE_API_URL ?? 'http://localhost:8080';

@@ -74,3 +74,64 @@ func validateNewOutfit(in newOutfitInput) (newOutfitInput, error) {
 	}
 	return cleaned, nil
 }
+
+type craftRequestInput struct {
+	Username    string  `json:"username"`
+	Category    string  `json:"category"`
+	Description string  `json:"description"`
+	BudgetIDR   *int64  `json:"budgetIdr"`
+	OutfitID    *string `json:"outfitId"`
+	PieceID     *string `json:"pieceId"`
+}
+
+func validateCraftRequest(in craftRequestInput) (craftRequestInput, error) {
+	var cleaned craftRequestInput
+
+	// ponytail: username is trusted from the client payload until session auth is introduced; verify against users table.
+	username := strings.TrimSpace(in.Username)
+	if username == "" {
+		return cleaned, errors.New("username required")
+	}
+	cleaned.Username = username
+
+	cat := strings.TrimSpace(in.Category)
+	switch cat {
+	case "hat", "top", "bottom", "shoes", "bag", "accessory":
+		cleaned.Category = cat
+	default:
+		return cleaned, errors.New("category must be one of: hat, top, bottom, shoes, bag, accessory")
+	}
+
+	desc := strings.TrimSpace(in.Description)
+	descLen := utf8.RuneCountInString(desc)
+	if descLen < 10 || descLen > 1000 {
+		return cleaned, errors.New("description must be between 10 and 1000 characters")
+	}
+	cleaned.Description = desc
+
+	if in.BudgetIDR != nil {
+		if *in.BudgetIDR < 0 || *in.BudgetIDR > 1000000000 {
+			return cleaned, errors.New("budgetIdr must be between 0 and 1000000000")
+		}
+		b := *in.BudgetIDR
+		cleaned.BudgetIDR = &b
+	}
+
+	if in.OutfitID != nil && strings.TrimSpace(*in.OutfitID) != "" {
+		oid := strings.TrimSpace(*in.OutfitID)
+		if !uuidRegex.MatchString(oid) {
+			return cleaned, errors.New("outfitId must be a valid uuid")
+		}
+		cleaned.OutfitID = &oid
+	}
+
+	if in.PieceID != nil && strings.TrimSpace(*in.PieceID) != "" {
+		pid := strings.TrimSpace(*in.PieceID)
+		if !uuidRegex.MatchString(pid) {
+			return cleaned, errors.New("pieceId must be a valid uuid")
+		}
+		cleaned.PieceID = &pid
+	}
+
+	return cleaned, nil
+}

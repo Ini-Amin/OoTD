@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -194,6 +195,145 @@ func TestValidateNewOutfit(t *testing.T) {
 			}
 			if !tc.wantErr && tc.checkFunc != nil {
 				tc.checkFunc(t, cleaned)
+			}
+		})
+	}
+}
+
+func TestValidateCraftRequest(t *testing.T) {
+	validBudget := int64(150000)
+	validOutfitID := "c0000000-0000-0000-0000-000000000001"
+	validPieceID := "a0000000-0000-0000-0000-000000000001"
+	negBudget := int64(-1)
+	badUUID := "not-a-valid-uuid"
+
+	tests := []struct {
+		name    string
+		input   craftRequestInput
+		wantErr bool
+	}{
+		{
+			name: "valid",
+			input: craftRequestInput{
+				Username:    "nadyaaulia",
+				Category:    "top",
+				Description: "Looking for an oversized linen shirt with relaxed drape",
+				BudgetIDR:   &validBudget,
+				OutfitID:    &validOutfitID,
+				PieceID:     &validPieceID,
+			},
+			wantErr: false,
+		},
+		{
+			name: "short description",
+			input: craftRequestInput{
+				Username:    "nadyaaulia",
+				Category:    "top",
+				Description: "too short",
+			},
+			wantErr: true,
+		},
+		{
+			name: "1001 chars description",
+			input: craftRequestInput{
+				Username:    "nadyaaulia",
+				Category:    "top",
+				Description: strings.Repeat("a", 1001),
+			},
+			wantErr: true,
+		},
+		{
+			name: "bad category",
+			input: craftRequestInput{
+				Username:    "nadyaaulia",
+				Category:    "spacesuit",
+				Description: "Valid length description for testing purpose",
+			},
+			wantErr: true,
+		},
+		{
+			name: "negative budget",
+			input: craftRequestInput{
+				Username:    "nadyaaulia",
+				Category:    "shoes",
+				Description: "Valid length description for testing purpose",
+				BudgetIDR:   &negBudget,
+			},
+			wantErr: true,
+		},
+		{
+			name: "bad uuid",
+			input: craftRequestInput{
+				Username:    "nadyaaulia",
+				Category:    "shoes",
+				Description: "Valid length description for testing purpose",
+				OutfitID:    &badUUID,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := validateCraftRequest(tc.input)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validateCraftRequest() error = %v, wantErr = %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestInterpretQuery(t *testing.T) {
+	tags := []string{"vintage", "campus", "rainy-day", "earth-tones"}
+
+	tests := []struct {
+		name       string
+		q          string
+		wantStyles []string
+		wantCats   []string
+		wantWords  []string
+	}{
+		{
+			name:       "styles, category and word query",
+			q:          "vintage denim shoes",
+			wantStyles: []string{"vintage"},
+			wantCats:   []string{"shoes"},
+			wantWords:  []string{"denim"},
+		},
+		{
+			name:       "multi-word style with stopwords and category",
+			q:          "rainy day look with oversized jacket",
+			wantStyles: []string{"rainy-day"},
+			wantCats:   []string{"top"},
+			wantWords:  []string{"oversized"},
+		},
+		{
+			name:       "only stopwords and short words",
+			q:          "the and for me to",
+			wantStyles: []string{},
+			wantCats:   []string{},
+			wantWords:  []string{},
+		},
+		{
+			name:       "multiple category synonyms deduped",
+			q:          "sneakers and boots",
+			wantStyles: []string{},
+			wantCats:   []string{"shoes"},
+			wantWords:  []string{},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := interpretQuery(tc.q, tags)
+			if !slices.Equal(got.Styles, tc.wantStyles) {
+				t.Errorf("Styles = %v, want %v", got.Styles, tc.wantStyles)
+			}
+			if !slices.Equal(got.Categories, tc.wantCats) {
+				t.Errorf("Categories = %v, want %v", got.Categories, tc.wantCats)
+			}
+			if !slices.Equal(got.Words, tc.wantWords) {
+				t.Errorf("Words = %v, want %v", got.Words, tc.wantWords)
 			}
 		})
 	}

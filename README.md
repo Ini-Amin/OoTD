@@ -74,6 +74,10 @@ GET /v1/outfits
 GET /v1/themes
 GET /v1/users
 POST /v1/outfits
+GET /v1/outfits/{id}     (includes tagged pieces)
+GET /v1/users/{username}
+GET /v1/search?q=        (keyword search over styles, piece types, words)
+POST /v1/requests        (craftsmaker request)
 ```
 
 The frontend shows preview data when the API is not running, then automatically uses the API when it becomes available.

@@ -2,7 +2,7 @@
 	import { ratioOf, type Outfit } from '$lib/outfits';
 	import { saved } from '$lib/saved.svelte';
 
-	let { outfit }: { outfit: Outfit } = $props();
+	let { outfit, onopen }: { outfit: Outfit; onopen?: (id: string) => void } = $props();
 
 	let imageError = $state(false);
 
@@ -13,7 +13,15 @@
 
 	let isSaved = $derived(saved.has(outfit.id));
 	let username = $derived(outfit.handle.replace(/^@/, ''));
-	let displayCount = $derived(outfit.savedBy + (isSaved ? 1 : 0));
+
+	function handlePhotoClick(event: MouseEvent): void {
+		if (!onopen) return;
+		if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+			return;
+		}
+		event.preventDefault();
+		onopen(outfit.id);
+	}
 
 	function handleSave(event: MouseEvent): void {
 		event.preventDefault();
@@ -23,7 +31,12 @@
 </script>
 
 <article class="outfit-card">
-	<a href={`/o/${outfit.id}`} class="photo-link" aria-label={outfit.title}>
+	<a
+		href={`/o/${outfit.id}`}
+		class="photo-link"
+		aria-label={outfit.title}
+		onclick={handlePhotoClick}
+	>
 		{#if outfit.imageUrl && !imageError}
 			<img
 				src={outfit.imageUrl}
@@ -44,67 +57,49 @@
 		{/if}
 	</a>
 
-	<div class="card-meta">
-		<h3 class="card-title">
-			<a href={`/o/${outfit.id}`} class="title-link">{outfit.title}</a>
-		</h3>
-
-		<div class="creator-line">
-			<a href={`/u/${username}`} class="creator-link">
-				<span
-					class="avatar"
-					style={`--avatar-accent: ${outfit.accent}`}
-					aria-hidden="true"
-				>
-					{outfit.creator.slice(0, 1)}
-				</span>
-				<span class="handle">{outfit.handle}</span>
-			</a>
+	<div class="card-overlay">
+		<div class="card-info">
+			<a href={`/o/${outfit.id}`} class="card-title" onclick={handlePhotoClick}>{outfit.title}</a>
+			<a href={`/u/${username}`} class="card-handle">{outfit.handle}</a>
 		</div>
-
-		{#if outfit.tags && outfit.tags.length > 0}
-			<p class="card-tags">{outfit.tags.join(' · ')}</p>
-		{/if}
-
-		<div class="card-footer">
-			<span class="save-count">
-				<span class="count-heart" aria-hidden="true">{isSaved ? '♥' : '♡'}</span>
-				{displayCount}
-			</span>
-			<button
-				type="button"
-				class="save-button"
-				class:saved={isSaved}
-				aria-pressed={isSaved}
-				aria-label={isSaved ? 'Saved' : 'Save look'}
-				onclick={handleSave}
-			>
-				<span class="btn-heart" aria-hidden="true">{isSaved ? '♥' : '♡'}</span>
-				<span>{isSaved ? 'Saved' : 'Save look'}</span>
-			</button>
-		</div>
+		<button
+			type="button"
+			class="save-button"
+			class:saved={isSaved}
+			aria-pressed={isSaved}
+			aria-label={isSaved ? 'Saved' : 'Save look'}
+			title={isSaved ? 'Saved' : 'Save look'}
+			onclick={handleSave}
+		>
+			<svg viewBox="0 0 24 24" class="heart-icon" aria-hidden="true" width="14" height="14">
+				<path
+					d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"
+					fill={isSaved ? 'currentColor' : 'none'}
+					stroke="currentColor"
+					stroke-width="2"
+				/>
+			</svg>
+		</button>
 	</div>
 </article>
 
 <style>
 	.outfit-card {
 		break-inside: avoid;
-		margin-bottom: 1.25rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.55rem;
+		margin-bottom: 0.75rem;
+		position: relative;
+		border-radius: var(--t-radius);
+		overflow: hidden;
+		isolation: isolate;
+		background: var(--t-surface);
 	}
 
 	.photo-link {
 		display: block;
 		width: 100%;
-		border-radius: var(--t-radius);
-		border: 1px solid var(--t-line);
-		background: var(--t-surface);
-		overflow: hidden;
-		position: relative;
 		text-decoration: none;
-		transition: transform 0.2s ease, border-color 0.2s ease;
+		border-radius: var(--t-radius);
+		overflow: hidden;
 	}
 
 	.photo-link img {
@@ -126,7 +121,6 @@
 			var(--card-accent) 0%,
 			color-mix(in srgb, var(--card-accent) 40%, var(--t-surface)) 100%
 		);
-		overflow: hidden;
 		transition: transform 0.25s ease;
 	}
 
@@ -141,159 +135,91 @@
 		user-select: none;
 	}
 
-	@media (prefers-reduced-motion: no-preference) {
-		.outfit-card:hover .photo-link {
-			transform: translateY(-2px);
-			border-color: var(--t-muted);
-		}
-
-		.outfit-card:hover .photo-link img,
-		.outfit-card:hover .visual-block {
-			transform: scale(1.02);
-		}
+	.card-overlay {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		display: flex;
+		align-items: flex-end;
+		justify-content: space-between;
+		gap: 0.5rem;
+		padding: 2.2rem 0.65rem 0.65rem;
+		background: linear-gradient(
+			to top,
+			color-mix(in srgb, var(--t-bg) 96%, transparent) 0%,
+			color-mix(in srgb, var(--t-bg) 65%, transparent) 60%,
+			transparent 100%
+		);
+		backdrop-filter: blur(4px);
+		-webkit-backdrop-filter: blur(4px);
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 0.2s ease;
+		z-index: 2;
 	}
 
-	@media (prefers-reduced-motion: reduce) {
-		.photo-link,
-		.photo-link img,
-		.visual-block,
-		.outfit-card,
-		.save-button {
-			transition: none !important;
-			transform: none !important;
-			animation: none !important;
-		}
+	.outfit-card:hover .card-overlay,
+	.outfit-card:focus-within .card-overlay {
+		opacity: 1;
+		pointer-events: auto;
 	}
 
-	.photo-link:focus-visible,
-	.title-link:focus-visible,
-	.creator-link:focus-visible,
-	.save-button:focus-visible {
-		outline: 2px solid var(--t-accent);
-		outline-offset: 2px;
-	}
-
-	.card-meta {
+	.card-info {
+		min-width: 0;
+		flex: 1;
 		display: flex;
 		flex-direction: column;
-		gap: 0.35rem;
-		padding: 0 0.15rem;
+		gap: 0.15rem;
 	}
 
 	.card-title {
 		margin: 0;
-		font-size: 0.88rem;
-		font-weight: 400;
-		line-height: 1.35;
+		font-size: 0.82rem;
+		font-weight: 450;
 		color: var(--t-fg);
-		display: -webkit-box;
-		-webkit-line-clamp: 2;
-		line-clamp: 2;
-		-webkit-box-orient: vertical;
-		overflow: hidden;
-	}
-
-	.title-link {
-		color: inherit;
 		text-decoration: none;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		line-height: 1.3;
 	}
 
-	.title-link:hover {
+	.card-title:hover {
 		text-decoration: underline;
 		text-underline-offset: 2px;
 	}
 
-	.creator-line {
-		display: flex;
-		align-items: center;
-		gap: 0.45rem;
-	}
-
-	.creator-link {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.45rem;
+	.card-handle {
+		font-size: 0.72rem;
+		color: var(--t-muted);
 		text-decoration: none;
-		color: inherit;
-		min-width: 0;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		line-height: 1.2;
 	}
 
-	.creator-link:hover .handle {
+	.card-handle:hover {
 		color: var(--t-fg);
 		text-decoration: underline;
 		text-underline-offset: 2px;
-	}
-
-	.avatar {
-		width: 1.25rem;
-		height: 1.25rem;
-		border-radius: 50%;
-		background: var(--avatar-accent);
-		color: #ffffff;
-		font-size: 0.65rem;
-		font-weight: 500;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-		line-height: 1;
-	}
-
-	.handle {
-		font-size: 0.76rem;
-		color: var(--t-muted);
-		font-weight: 350;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.card-tags {
-		margin: 0;
-		font-size: 0.74rem;
-		color: var(--t-muted);
-		font-weight: 350;
-		line-height: 1.35;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.card-footer {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding-top: 0.15rem;
-	}
-
-	.save-count {
-		font-size: 0.76rem;
-		color: var(--t-muted);
-		font-weight: 400;
-		user-select: none;
-		display: inline-flex;
-		align-items: center;
-		gap: 0.25rem;
-	}
-
-	.count-heart {
-		font-size: 0.74rem;
 	}
 
 	.save-button {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.3rem;
-		background: transparent;
+		flex-shrink: 0;
+		width: 1.85rem;
+		height: 1.85rem;
+		border-radius: 50%;
 		border: 1px solid var(--t-line);
-		border-radius: 999px;
+		background: color-mix(in srgb, var(--t-surface) 92%, transparent);
 		color: var(--t-fg);
-		font-size: 0.74rem;
-		font-weight: 400;
-		padding: 0.38rem 0.75rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
 		cursor: pointer;
-		line-height: 1;
-		transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+		transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 	}
 
 	.save-button:hover {
@@ -307,8 +233,44 @@
 		border-color: var(--t-fg);
 	}
 
-	.btn-heart {
-		font-size: 0.8rem;
-		line-height: 1;
+	.save-button:focus-visible,
+	.photo-link:focus-visible,
+	.card-title:focus-visible,
+	.card-handle:focus-visible {
+		outline: 2px solid var(--t-accent);
+		outline-offset: 2px;
+	}
+
+	@media (prefers-reduced-motion: no-preference) {
+		.outfit-card:hover .photo-link img,
+		.outfit-card:hover .visual-block {
+			transform: scale(1.02);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.photo-link img,
+		.visual-block,
+		.outfit-card,
+		.card-overlay,
+		.save-button {
+			transition: none !important;
+			transform: none !important;
+			animation: none !important;
+		}
+	}
+
+	@media (hover: none) {
+		.card-overlay {
+			opacity: 1;
+			pointer-events: auto;
+			padding: 1.5rem 0.5rem 0.5rem;
+			gap: 0.35rem;
+		}
+
+		.save-button {
+			width: 1.7rem;
+			height: 1.7rem;
+		}
 	}
 </style>
