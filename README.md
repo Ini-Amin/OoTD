@@ -21,7 +21,7 @@ TECHNICAL_REQUIREMENTS.md
 - [x] Run both applications locally
 - [x] Replace sample data with PostgreSQL (`api/migrations/`)
 - [x] 7 curated profile theme presets (`themes` table, picker on the feed)
-- [ ] Add a real create-OoTD flow
+- [x] Add a real create-OoTD flow (`/new` form, `POST /v1/outfits`, `GET /v1/users`)
 
 ## Local prerequisites
 
@@ -72,6 +72,8 @@ Useful starter endpoints:
 GET /health
 GET /v1/outfits
 GET /v1/themes
+GET /v1/users
+POST /v1/outfits
 ```
 
 The frontend shows preview data when the API is not running, then automatically uses the API when it becomes available.

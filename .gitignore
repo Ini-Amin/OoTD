@@ -16,3 +16,8 @@ api/tmp/
 # Operating system/editor files
 .DS_Store
 .idea/
+
+# Secrets at any level
+.env
+.env.*
+!.env.example

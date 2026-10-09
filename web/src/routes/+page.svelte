@@ -1,33 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { previewOutfits, type Outfit } from '$lib/outfits';
-	import { presetThemes, themeStyle, type Theme } from '$lib/themes';
 
 	const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:8080';
 
 	let outfits = $state<Outfit[]>(previewOutfits);
 	let feedSource = $state<'preview' | 'api'>('preview');
-	let themes = $state<Theme[]>(presetThemes);
-	let themeSlug = $state(presetThemes[0].slug);
-	let theme = $derived(themes.find((t) => t.slug === themeSlug) ?? themes[0]);
-
-	$effect(() => {
-		document.documentElement.style.cssText = themeStyle(theme);
-	});
-
-	function pickTheme(slug: string) {
-		themeSlug = slug;
-		localStorage.setItem('ootd-theme', slug);
-	}
 
 	onMount(async () => {
-		themeSlug = localStorage.getItem('ootd-theme') ?? themeSlug;
-
 		try {
-			const [outfitRes, themeRes] = await Promise.all([
-				fetch(`${apiBase}/v1/outfits`),
-				fetch(`${apiBase}/v1/themes`)
-			]);
+			const outfitRes = await fetch(`${apiBase}/v1/outfits`);
 			if (!outfitRes.ok) throw new Error('The API did not return a successful response.');
 
 			const payload = (await outfitRes.json()) as { outfits: Outfit[] };
@@ -35,12 +17,8 @@
 				outfits = payload.outfits;
 				feedSource = 'api';
 			}
-			if (themeRes.ok) {
-				const t = (await themeRes.json()) as { themes: Theme[] };
-				if (t.themes.length > 0) themes = t.themes;
-			}
 		} catch {
-			// The API is optional, so local preview data and preset themes remain visible.
+			// The API is optional, so local preview data remains visible.
 		}
 	});
 </script>
@@ -53,15 +31,6 @@
 	/>
 </svelte:head>
 
-<header class="site-header">
-	<a class="wordmark" href="/" aria-label="OoTD home">OoTD<span>•</span></a>
-	<nav aria-label="Primary navigation">
-		<a class="active" href="/">Discover</a>
-		<a href="/">Collections</a>
-		<a href="/">Profile</a>
-	</nav>
-	<button class="create-button" type="button">Create an OoTD</button>
-</header>
 
 <main>
 	<section class="hero">
@@ -122,135 +91,16 @@
 	</section>
 </main>
 
-<aside class="theme-picker" aria-label="Choose a theme">
-	{#each themes as t}
-		<button
-			type="button"
-			class:selected={t.slug === theme.slug}
-			aria-pressed={t.slug === theme.slug}
-			aria-label={`${t.name} theme`}
-			title={t.name}
-			style={`--sw-bg:${t.bg};--sw-accent:${t.accent}`}
-			onclick={() => pickTheme(t.slug)}
-		></button>
-	{/each}
-</aside>
 
 <style>
-	:global(:root) {
-		/* SSR/first-paint fallback = the "minimal" preset */
-		--t-bg: #fafafa;
-		--t-surface: #ffffff;
-		--t-fg: #1c1c1c;
-		--t-accent: #1c1c1c;
-		--t-font: Inter, ui-sans-serif, system-ui, sans-serif;
-		--t-radius: 1.25rem;
-		--t-muted: color-mix(in srgb, #1c1c1c 68%, #fafafa);
-		--t-tint: color-mix(in srgb, #1c1c1c 8%, #fafafa);
-		--t-line: color-mix(in srgb, #1c1c1c 16%, #fafafa);
-	}
-
-	.theme-picker {
-		position: fixed;
-		right: 1rem;
-		bottom: 1rem;
-		display: flex;
-		gap: 0.5rem;
-		padding: 0.5rem 0.7rem;
-		border: 1px solid var(--t-line);
-		border-radius: 999px;
-		background: var(--t-surface);
-		box-shadow: 0 6px 24px rgb(0 0 0 / 12%);
-	}
-
-	.theme-picker button {
-		width: 1.6rem;
-		height: 1.6rem;
-		border: 2px solid var(--sw-accent);
-		border-radius: 50%;
-		background: linear-gradient(135deg, var(--sw-bg) 50%, var(--sw-accent) 50%);
-		padding: 0;
-	}
-
-	.theme-picker button.selected {
-		outline: 2px solid var(--t-fg);
-		outline-offset: 2px;
-	}
-	:global(*) {
-		box-sizing: border-box;
-	}
-
-	:global(body) {
-		margin: 0;
-		min-width: 320px;
-		background: var(--t-bg);
-		color: var(--t-fg);
-		font-family: var(--t-font);
-	}
-
-	button,
-	a {
-		font: inherit;
-	}
-
-	button {
-		cursor: pointer;
-	}
-
-	.site-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1.5rem;
-		width: min(1180px, calc(100% - 2.5rem));
-		margin: 0 auto;
-		padding: 1.4rem 0;
-	}
-
-	.wordmark {
-		color: var(--t-fg);
-		font-family: Georgia, serif;
-		font-size: 1.65rem;
-		font-weight: 700;
-		letter-spacing: -0.08em;
-		text-decoration: none;
-	}
-
-	.wordmark span {
-		color: var(--t-accent);
-	}
-
-	nav {
-		display: flex;
-		gap: 1.75rem;
-	}
-
-	nav a {
-		color: var(--t-muted);
-		font-size: 0.9rem;
-		text-decoration: none;
-	}
-
-	nav a.active,
-	nav a:hover {
-		color: var(--t-fg);
-		font-weight: 700;
-	}
-
-	.create-button,
 	.primary-button {
 		border: 0;
 		border-radius: 999px;
 		background: var(--t-fg);
 		color: var(--t-bg);
 		font-weight: 700;
+		padding: 0.9rem 1.35rem;
 	}
-
-	.create-button {
-		padding: 0.72rem 1.1rem;
-		font-size: 0.86rem;
-	}
-
 	main {
 		width: min(1180px, calc(100% - 2.5rem));
 		margin: 0 auto;
@@ -493,17 +343,6 @@
 	}
 
 	@media (max-width: 760px) {
-		.site-header {
-			width: min(100% - 1.5rem, 1180px);
-		}
-
-		nav {
-			display: none;
-		}
-
-		.create-button {
-			padding: 0.65rem 0.9rem;
-		}
 
 		main {
 			width: min(100% - 1.5rem, 1180px);
