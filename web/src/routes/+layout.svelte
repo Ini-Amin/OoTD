@@ -101,15 +101,16 @@
 		gap: 1.5rem;
 		width: min(1180px, calc(100% - 2.5rem));
 		margin: 0 auto;
-		padding: 1.4rem 0;
+		padding: 0.85rem 0;
+		border-bottom: 1px solid var(--t-line);
 	}
 
 	.wordmark {
 		color: var(--t-fg);
 		font-family: Georgia, serif;
-		font-size: 1.65rem;
-		font-weight: 700;
-		letter-spacing: -0.08em;
+		font-size: 1.35rem;
+		font-weight: 400;
+		letter-spacing: -0.05em;
 		text-decoration: none;
 	}
 
@@ -119,31 +120,38 @@
 
 	nav {
 		display: flex;
-		gap: 1.75rem;
+		gap: 1.5rem;
 	}
 
 	nav a {
 		color: var(--t-muted);
-		font-size: 0.9rem;
+		font-size: 0.85rem;
+		font-weight: 350;
 		text-decoration: none;
+		transition: color 0.15s ease;
 	}
 
 	nav a.active,
 	nav a:hover {
 		color: var(--t-fg);
-		font-weight: 700;
+		font-weight: 500;
 	}
 
 	.create-button {
-		border: 0;
+		border: 1px solid var(--t-line);
 		border-radius: 999px;
 		background: var(--t-fg);
 		color: var(--t-bg);
-		font-weight: 700;
-		padding: 0.72rem 1.1rem;
-		font-size: 0.86rem;
+		font-weight: 450;
+		padding: 0.45rem 0.9rem;
+		font-size: 0.82rem;
 		text-decoration: none;
 		display: inline-block;
+		transition: opacity 0.15s ease;
+	}
+
+	.create-button:hover {
+		opacity: 0.9;
 	}
 
 	.theme-picker {
@@ -177,6 +185,7 @@
 	@media (max-width: 760px) {
 		.site-header {
 			width: min(100% - 1.5rem, 1180px);
+			padding: 0.75rem 0;
 		}
 
 		nav {
@@ -184,7 +193,8 @@
 		}
 
 		.create-button {
-			padding: 0.65rem 0.9rem;
+			padding: 0.4rem 0.8rem;
+			font-size: 0.8rem;
 		}
 	}
 </style>

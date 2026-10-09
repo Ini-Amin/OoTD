@@ -20,6 +20,13 @@ type Outfit struct {
 	Tags    []string `json:"tags"`
 	Accent  string   `json:"accent"`
 	SavedBy int      `json:"savedBy"`
+	Match   int      `json:"match"`
+}
+
+type Tag struct {
+	Slug  string `json:"slug"`
+	Name  string `json:"name"`
+	Count int    `json:"count"`
 }
 
 type Theme struct {
@@ -46,11 +53,11 @@ func NewServer(db *pgxpool.Pool, allowedOrigin string) http.Handler {
 	s := &server{db: db}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.health)
+	mux.HandleFunc("GET /v1/tags", s.listTags)
 	mux.HandleFunc("GET /v1/outfits", s.listOutfits)
 	mux.HandleFunc("POST /v1/outfits", s.createOutfit)
 	mux.HandleFunc("GET /v1/users", s.listUsers)
 	mux.HandleFunc("GET /v1/themes", s.listThemes)
-
 	return withCORS(mux, allowedOrigin)
 }
 
@@ -62,18 +69,73 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "ootd-api"})
 }
 
+func parseStyles(raw string) []string {
+	parts := strings.Split(raw, ",")
+	seen := make(map[string]bool)
+	styles := []string{}
+	for _, p := range parts {
+		s := strings.ToLower(strings.TrimSpace(p))
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		styles = append(styles, s)
+		if len(styles) == 10 {
+			break
+		}
+	}
+	return styles
+}
+
+func (s *server) listTags(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.db.Query(r.Context(), `
+		SELECT t.normalized_name, t.display_name, COUNT(o.id)::int AS count
+		FROM tags t
+		JOIN outfit_tags ot ON ot.tag_id = t.id
+		JOIN outfits o ON o.id = ot.outfit_id AND o.visibility = 'public' AND o.status = 'published'
+		GROUP BY t.id, t.normalized_name, t.display_name
+		HAVING COUNT(o.id) >= 1
+		ORDER BY count DESC, t.display_name ASC
+		LIMIT 30`)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer rows.Close()
+
+	tags := []Tag{}
+	for rows.Next() {
+		var t Tag
+		if err := rows.Scan(&t.Slug, &t.Name, &t.Count); err != nil {
+			serverError(w, err)
+			return
+		}
+		tags = append(tags, t)
+	}
+	if err := rows.Err(); err != nil {
+		serverError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string][]Tag{"tags": tags})
+}
+
 func (s *server) listOutfits(w http.ResponseWriter, r *http.Request) {
+	styles := parseStyles(r.URL.Query().Get("styles"))
+
 	rows, err := s.db.Query(r.Context(), `
 		SELECT o.id::text, u.display_name, '@' || u.username, o.title, o.caption, o.accent, o.save_count,
-		       COALESCE(array_agg(t.display_name ORDER BY t.display_name) FILTER (WHERE t.id IS NOT NULL), '{}')
+		       COALESCE(array_agg(t.display_name ORDER BY t.display_name) FILTER (WHERE t.id IS NOT NULL), '{}'),
+		       COUNT(t.id) FILTER (WHERE t.normalized_name = ANY($1))::int AS match
 		FROM outfits o
 		JOIN users u ON u.id = o.author_id
 		LEFT JOIN outfit_tags ot ON ot.outfit_id = o.id
 		LEFT JOIN tags t ON t.id = ot.tag_id
 		WHERE o.visibility = 'public' AND o.status = 'published'
 		GROUP BY o.id, u.id
-		ORDER BY o.published_at DESC
-		LIMIT 50`)
+		HAVING cardinality($1::text[]) = 0 OR COUNT(t.id) FILTER (WHERE t.normalized_name = ANY($1)) > 0
+		ORDER BY match DESC, o.published_at DESC
+		LIMIT 50`, styles)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -83,7 +145,7 @@ func (s *server) listOutfits(w http.ResponseWriter, r *http.Request) {
 	outfits := []Outfit{}
 	for rows.Next() {
 		var o Outfit
-		if err := rows.Scan(&o.ID, &o.Creator, &o.Handle, &o.Title, &o.Caption, &o.Accent, &o.SavedBy, &o.Tags); err != nil {
+		if err := rows.Scan(&o.ID, &o.Creator, &o.Handle, &o.Title, &o.Caption, &o.Accent, &o.SavedBy, &o.Tags, &o.Match); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -193,6 +255,7 @@ func (s *server) createOutfit(w http.ResponseWriter, r *http.Request) {
 	if out.Tags == nil {
 		out.Tags = []string{}
 	}
+	out.Match = 0
 
 	if err := tx.Commit(r.Context()); err != nil {
 		serverError(w, err)

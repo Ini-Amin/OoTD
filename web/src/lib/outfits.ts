@@ -7,6 +7,7 @@ export type Outfit = {
 	tags: string[];
 	accent: string;
 	savedBy: number;
+	match?: number;
 };
 
 export const previewOutfits: Outfit[] = [
