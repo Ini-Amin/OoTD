@@ -25,9 +25,37 @@
 	let caption = $state('');
 	let tagsInput = $state('');
 	let accent = $state(accentColors[0]);
-
+	let imageUrl = $state('');
+	let debouncedPreviewUrl = $state('');
+	let imageLoadError = $state(false);
 	let submitting = $state(false);
 	let errorMessage = $state<string | null>(null);
+
+	$effect(() => {
+		const raw = imageUrl.trim();
+		imageLoadError = false;
+
+		let valid = false;
+		try {
+			const u = new URL(raw);
+			valid = u.protocol === 'https:' && u.hostname.includes('.');
+		} catch {
+			valid = false;
+		}
+
+		if (!valid) {
+			debouncedPreviewUrl = '';
+			return;
+		}
+
+		const timer = setTimeout(() => {
+			debouncedPreviewUrl = raw;
+		}, 500);
+
+		return () => {
+			clearTimeout(timer);
+		};
+	});
 
 	onMount(async () => {
 		try {
@@ -57,13 +85,25 @@
 			.filter((t) => t.length > 0);
 
 		// ponytail: username is trusted until auth phase replaces this with session auth
-		const payload = {
+		const payload: {
+			username: string;
+			title: string;
+			caption: string;
+			tags: string[];
+			accent: string;
+			imageUrl?: string;
+		} = {
 			username,
 			title: title.trim(),
 			caption: caption.trim(),
 			tags,
 			accent: accent.toLowerCase()
 		};
+
+		const trimmedImage = imageUrl.trim();
+		if (trimmedImage.length > 0) {
+			payload.imageUrl = trimmedImage;
+		}
 
 		try {
 			const res = await fetch(`${apiBase}/v1/outfits`, {
@@ -149,6 +189,38 @@
 					placeholder="Describe the pieces, styling choices, or mood"
 					disabled={submitting}
 				></textarea>
+			</div>
+			<div class="field">
+				<label for="image-url">
+					Photo URL <span class="hint">(optional)</span>
+				</label>
+				<input
+					id="image-url"
+					type="url"
+					name="imageUrl"
+					bind:value={imageUrl}
+					oninput={() => {
+						imageLoadError = false;
+					}}
+					placeholder="https://..."
+					maxlength={500}
+					disabled={submitting}
+				/>
+				<span class="hint">Paste an https image link. Direct uploads are coming next.</span>
+				{#if debouncedPreviewUrl}
+					{#if imageLoadError}
+						<span class="hint image-error-hint">Could not load that image.</span>
+					{:else}
+						<img
+							src={debouncedPreviewUrl}
+							alt="Outfit preview"
+							class="preview-image"
+							onerror={() => {
+								imageLoadError = true;
+							}}
+						/>
+					{/if}
+				{/if}
 			</div>
 
 			<div class="field">
@@ -270,6 +342,7 @@
 	}
 
 	input[type='text'],
+	input[type='url'],
 	select,
 	textarea {
 		width: 100%;
@@ -283,6 +356,7 @@
 	}
 
 	input[type='text']:focus,
+	input[type='url']:focus,
 	select:focus,
 	textarea:focus {
 		outline: 2px solid var(--t-fg);
@@ -290,6 +364,7 @@
 	}
 
 	input[type='text']:disabled,
+	input[type='url']:disabled,
 	select:disabled,
 	textarea:disabled {
 		opacity: 0.5;
@@ -299,6 +374,21 @@
 	textarea {
 		resize: vertical;
 		min-height: 110px;
+	}
+	.preview-image {
+		max-height: 18rem;
+		width: auto;
+		max-width: 100%;
+		object-fit: cover;
+		border-radius: var(--t-radius);
+		border: 1px solid var(--t-line);
+		display: block;
+		margin-top: 0.25rem;
+	}
+
+	.image-error-hint {
+		color: var(--t-accent);
+		margin-top: 0.25rem;
 	}
 
 	.swatch-row {

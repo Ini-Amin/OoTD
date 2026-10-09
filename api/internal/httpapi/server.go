@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -12,15 +13,18 @@ import (
 )
 
 type Outfit struct {
-	ID      string   `json:"id"`
-	Creator string   `json:"creator"`
-	Handle  string   `json:"handle"`
-	Title   string   `json:"title"`
-	Caption string   `json:"caption"`
-	Tags    []string `json:"tags"`
-	Accent  string   `json:"accent"`
-	SavedBy int      `json:"savedBy"`
-	Match   int      `json:"match"`
+	ID          string   `json:"id"`
+	Creator     string   `json:"creator"`
+	Handle      string   `json:"handle"`
+	Title       string   `json:"title"`
+	Caption     string   `json:"caption"`
+	Tags        []string `json:"tags"`
+	Accent      string   `json:"accent"`
+	SavedBy     int      `json:"savedBy"`
+	Match       int      `json:"match"`
+	ImageURL    string   `json:"imageUrl"`
+	ImageWidth  int      `json:"imageWidth"`
+	ImageHeight int      `json:"imageHeight"`
 }
 
 type Tag struct {
@@ -45,6 +49,13 @@ type User struct {
 	DisplayName string `json:"displayName"`
 }
 
+type UserProfile struct {
+	Username    string  `json:"username"`
+	DisplayName string  `json:"displayName"`
+	Bio         string  `json:"bio"`
+	Theme       *Theme  `json:"theme"`
+}
+
 type server struct {
 	db *pgxpool.Pool
 }
@@ -55,8 +66,10 @@ func NewServer(db *pgxpool.Pool, allowedOrigin string) http.Handler {
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("GET /v1/tags", s.listTags)
 	mux.HandleFunc("GET /v1/outfits", s.listOutfits)
+	mux.HandleFunc("GET /v1/outfits/{id}", s.getOutfit)
 	mux.HandleFunc("POST /v1/outfits", s.createOutfit)
 	mux.HandleFunc("GET /v1/users", s.listUsers)
+	mux.HandleFunc("GET /v1/users/{username}", s.getUser)
 	mux.HandleFunc("GET /v1/themes", s.listThemes)
 	return withCORS(mux, allowedOrigin)
 }
@@ -68,6 +81,83 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "ootd-api"})
 }
+var uuidRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+func outfitSelectSQL(matchExpr, whereClause, orderClause string) string {
+	return `
+		SELECT o.id::text, u.display_name, '@' || u.username, o.title, o.caption, o.accent, o.save_count,
+		       COALESCE(array_agg(t.display_name ORDER BY t.display_name) FILTER (WHERE t.id IS NOT NULL), '{}'),
+		       ` + matchExpr + `,
+		       COALESCE(o.image_url, ''),
+		       COALESCE(o.image_width, 0),
+		       COALESCE(o.image_height, 0)
+		FROM outfits o
+		JOIN users u ON u.id = o.author_id
+		LEFT JOIN outfit_tags ot ON ot.outfit_id = o.id
+		LEFT JOIN tags t ON t.id = ot.tag_id
+		` + whereClause + `
+		GROUP BY o.id, u.id
+		` + orderClause
+}
+
+var listOutfitsSQL = outfitSelectSQL(
+	`COUNT(t.id) FILTER (WHERE t.normalized_name = ANY($1))::int AS match`,
+	`WHERE o.visibility = 'public' AND o.status = 'published'`,
+	`HAVING cardinality($1::text[]) = 0 OR COUNT(t.id) FILTER (WHERE t.normalized_name = ANY($1)) > 0
+	 ORDER BY match DESC, o.published_at DESC
+	 LIMIT 50`,
+)
+
+var getOutfitByIDSQL = outfitSelectSQL(
+	`0 AS match`,
+	`WHERE o.id = $1::uuid AND o.visibility = 'public' AND o.status = 'published'`,
+	``,
+)
+
+var listUserOutfitsSQL = outfitSelectSQL(
+	`0 AS match`,
+	`WHERE u.username = $1 AND o.visibility = 'public' AND o.status = 'published'`,
+	`ORDER BY o.published_at DESC`,
+)
+
+var createOutfitFetchSQL = outfitSelectSQL(
+	`0 AS match`,
+	`WHERE o.id = $1::uuid`,
+	``,
+)
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanOutfit(row rowScanner) (Outfit, error) {
+	var o Outfit
+	err := row.Scan(
+		&o.ID, &o.Creator, &o.Handle, &o.Title, &o.Caption,
+		&o.Accent, &o.SavedBy, &o.Tags, &o.Match,
+		&o.ImageURL, &o.ImageWidth, &o.ImageHeight,
+	)
+	if o.Tags == nil {
+		o.Tags = []string{}
+	}
+	return o, err
+}
+
+func scanOutfits(rows pgx.Rows) ([]Outfit, error) {
+	outfits := []Outfit{}
+	for rows.Next() {
+		o, err := scanOutfit(rows)
+		if err != nil {
+			return nil, err
+		}
+		outfits = append(outfits, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return outfits, nil
+}
+
 
 func parseStyles(raw string) []string {
 	parts := strings.Split(raw, ",")
@@ -123,40 +213,95 @@ func (s *server) listTags(w http.ResponseWriter, r *http.Request) {
 func (s *server) listOutfits(w http.ResponseWriter, r *http.Request) {
 	styles := parseStyles(r.URL.Query().Get("styles"))
 
-	rows, err := s.db.Query(r.Context(), `
-		SELECT o.id::text, u.display_name, '@' || u.username, o.title, o.caption, o.accent, o.save_count,
-		       COALESCE(array_agg(t.display_name ORDER BY t.display_name) FILTER (WHERE t.id IS NOT NULL), '{}'),
-		       COUNT(t.id) FILTER (WHERE t.normalized_name = ANY($1))::int AS match
-		FROM outfits o
-		JOIN users u ON u.id = o.author_id
-		LEFT JOIN outfit_tags ot ON ot.outfit_id = o.id
-		LEFT JOIN tags t ON t.id = ot.tag_id
-		WHERE o.visibility = 'public' AND o.status = 'published'
-		GROUP BY o.id, u.id
-		HAVING cardinality($1::text[]) = 0 OR COUNT(t.id) FILTER (WHERE t.normalized_name = ANY($1)) > 0
-		ORDER BY match DESC, o.published_at DESC
-		LIMIT 50`, styles)
+	rows, err := s.db.Query(r.Context(), listOutfitsSQL, styles)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
 	defer rows.Close()
 
-	outfits := []Outfit{}
-	for rows.Next() {
-		var o Outfit
-		if err := rows.Scan(&o.ID, &o.Creator, &o.Handle, &o.Title, &o.Caption, &o.Accent, &o.SavedBy, &o.Tags, &o.Match); err != nil {
-			serverError(w, err)
-			return
-		}
-		outfits = append(outfits, o)
-	}
-	if err := rows.Err(); err != nil {
+	outfits, err := scanOutfits(rows)
+	if err != nil {
 		serverError(w, err)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string][]Outfit{"outfits": outfits})
+}
+
+func (s *server) getOutfit(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !uuidRegex.MatchString(id) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	out, err := scanOutfit(s.db.QueryRow(r.Context(), getOutfitByIDSQL, id))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		serverError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]Outfit{"outfit": out})
+}
+
+func (s *server) getUser(w http.ResponseWriter, r *http.Request) {
+	username := r.PathValue("username")
+
+	var u UserProfile
+	var slug, name, bg, surface, fg, accent, font, radius *string
+	err := s.db.QueryRow(r.Context(), `
+		SELECT u.username, u.display_name, u.bio,
+		       t.slug, t.name, t.bg, t.surface, t.fg, t.accent, t.font, t.radius
+		FROM users u
+		LEFT JOIN themes t ON t.id = u.theme_id
+		WHERE u.username = $1
+	`, username).Scan(
+		&u.Username, &u.DisplayName, &u.Bio,
+		&slug, &name, &bg, &surface, &fg, &accent, &font, &radius,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "unknown user")
+			return
+		}
+		serverError(w, err)
+		return
+	}
+	if slug != nil {
+		u.Theme = &Theme{
+			Slug:    *slug,
+			Name:    *name,
+			Bg:      *bg,
+			Surface: *surface,
+			Fg:      *fg,
+			Accent:  *accent,
+			Font:    *font,
+			Radius:  *radius,
+		}
+	}
+
+	rows, err := s.db.Query(r.Context(), listUserOutfitsSQL, username)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer rows.Close()
+
+	outfits, err := scanOutfits(rows)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user":    u,
+		"outfits": outfits,
+	})
 }
 
 func (s *server) createOutfit(w http.ResponseWriter, r *http.Request) {
@@ -200,12 +345,17 @@ func (s *server) createOutfit(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 
+	var imgVal any
+	if cleaned.ImageURL != "" {
+		imgVal = cleaned.ImageURL
+	}
+
 	var outfitID string
 	err = tx.QueryRow(r.Context(), `
-		INSERT INTO outfits (author_id, title, caption, accent)
-		VALUES ($1::uuid, $2, $3, $4)
+		INSERT INTO outfits (author_id, title, caption, accent, image_url)
+		VALUES ($1::uuid, $2, $3, $4, $5)
 		RETURNING id::text
-	`, authorID, cleaned.Title, cleaned.Caption, cleaned.Accent).Scan(&outfitID)
+	`, authorID, cleaned.Title, cleaned.Caption, cleaned.Accent, imgVal).Scan(&outfitID)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -236,27 +386,11 @@ func (s *server) createOutfit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var out Outfit
-	err = tx.QueryRow(r.Context(), `
-		SELECT o.id::text, u.display_name, '@' || u.username, o.title, o.caption, o.accent, o.save_count,
-		       COALESCE(array_agg(t.display_name ORDER BY t.display_name) FILTER (WHERE t.id IS NOT NULL), '{}')
-		FROM outfits o
-		JOIN users u ON u.id = o.author_id
-		LEFT JOIN outfit_tags ot ON ot.outfit_id = o.id
-		LEFT JOIN tags t ON t.id = ot.tag_id
-		WHERE o.id = $1::uuid
-		GROUP BY o.id, u.id
-	`, outfitID).Scan(&out.ID, &out.Creator, &out.Handle, &out.Title, &out.Caption, &out.Accent, &out.SavedBy, &out.Tags)
+	out, err := scanOutfit(tx.QueryRow(r.Context(), createOutfitFetchSQL, outfitID))
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-
-	if out.Tags == nil {
-		out.Tags = []string{}
-	}
-	out.Match = 0
-
 	if err := tx.Commit(r.Context()); err != nil {
 		serverError(w, err)
 		return

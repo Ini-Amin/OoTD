@@ -114,6 +114,76 @@ func TestValidateNewOutfit(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "empty imageUrl ok",
+			input: newOutfitInput{
+				Username: "nadyaaulia",
+				Title:    "Valid Outfit",
+				Caption:  "A nice caption.",
+				Tags:     []string{"campus"},
+				Accent:   "#e8b86d",
+				ImageURL: "",
+			},
+			wantErr: false,
+			checkFunc: func(t *testing.T, cleaned newOutfitInput) {
+				if cleaned.ImageURL != "" {
+					t.Errorf("got ImageURL %q, want empty", cleaned.ImageURL)
+				}
+			},
+		},
+		{
+			name: "valid https imageUrl ok",
+			input: newOutfitInput{
+				Username: "nadyaaulia",
+				Title:    "Valid Outfit",
+				Caption:  "A nice caption.",
+				Tags:     []string{"campus"},
+				Accent:   "#e8b86d",
+				ImageURL: "https://picsum.photos/seed/ootd1/600/800",
+			},
+			wantErr: false,
+			checkFunc: func(t *testing.T, cleaned newOutfitInput) {
+				if cleaned.ImageURL != "https://picsum.photos/seed/ootd1/600/800" {
+					t.Errorf("got ImageURL %q, want %q", cleaned.ImageURL, "https://picsum.photos/seed/ootd1/600/800")
+				}
+			},
+		},
+		{
+			name: "http imageUrl rejected",
+			input: newOutfitInput{
+				Username: "nadyaaulia",
+				Title:    "Valid Outfit",
+				Caption:  "A nice caption.",
+				Tags:     []string{"campus"},
+				Accent:   "#e8b86d",
+				ImageURL: "http://picsum.photos/seed/ootd1/600/800",
+			},
+			wantErr: true,
+		},
+		{
+			name: "imageUrl over 500 chars rejected",
+			input: newOutfitInput{
+				Username: "nadyaaulia",
+				Title:    "Valid Outfit",
+				Caption:  "A nice caption.",
+				Tags:     []string{"campus"},
+				Accent:   "#e8b86d",
+				ImageURL: "https://picsum.photos/" + strings.Repeat("a", 480),
+			},
+			wantErr: true,
+		},
+		{
+			name: "imageUrl containing space rejected",
+			input: newOutfitInput{
+				Username: "nadyaaulia",
+				Title:    "Valid Outfit",
+				Caption:  "A nice caption.",
+				Tags:     []string{"campus"},
+				Accent:   "#e8b86d",
+				ImageURL: "https://picsum.photos/seed/ootd test/600/800",
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tc := range tests {

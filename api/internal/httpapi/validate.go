@@ -4,6 +4,7 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -13,6 +14,7 @@ type newOutfitInput struct {
 	Caption  string   `json:"caption"`
 	Tags     []string `json:"tags"`
 	Accent   string   `json:"accent"`
+	ImageURL string   `json:"imageUrl"`
 }
 
 var accentRegex = regexp.MustCompile(`^#[0-9a-f]{6}$`)
@@ -58,5 +60,17 @@ func validateNewOutfit(in newOutfitInput) (newOutfitInput, error) {
 	}
 	cleaned.Accent = in.Accent
 
+	if in.ImageURL != "" {
+		if !strings.HasPrefix(in.ImageURL, "https://") {
+			return cleaned, errors.New("imageUrl must start with https://")
+		}
+		if utf8.RuneCountInString(in.ImageURL) > 500 {
+			return cleaned, errors.New("imageUrl must be at most 500 characters")
+		}
+		if strings.IndexFunc(in.ImageURL, unicode.IsSpace) >= 0 {
+			return cleaned, errors.New("imageUrl cannot contain whitespace")
+		}
+		cleaned.ImageURL = in.ImageURL
+	}
 	return cleaned, nil
 }

@@ -27,9 +27,16 @@
 <header class="site-header">
 	<a class="wordmark" href="/" aria-label="OoTD home">OoTD<span>•</span></a>
 	<nav aria-label="Primary navigation">
-		<a class:active={page.url.pathname === '/'} href="/">Discover</a>
-		<a href="/">Collections</a>
-		<a href="/">Profile</a>
+		<a
+			class:active={page.url.pathname === '/'}
+			aria-current={page.url.pathname === '/' ? 'page' : undefined}
+			href="/"
+		>Discover</a>
+		<a
+			class:active={page.url.pathname === '/saved'}
+			aria-current={page.url.pathname === '/saved' ? 'page' : undefined}
+			href="/saved"
+		>Saved</a>
 	</nav>
 	<a class="create-button" href="/new">Create an OoTD</a>
 </header>
