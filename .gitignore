@@ -1,0 +1,18 @@
+# Frontend dependencies and generated files
+web/node_modules/
+web/.svelte-kit/
+web/build/
+web/.env
+
+# Local tooling cache
+.npm-cache/
+.cache/
+
+# Go build output and local configuration
+api/ootd-api
+api/.env
+api/tmp/
+
+# Operating system/editor files
+.DS_Store
+.idea/
