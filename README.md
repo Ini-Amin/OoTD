@@ -18,15 +18,16 @@ TECHNICAL_REQUIREMENTS.md
 
 - [x] SvelteKit application scaffold
 - [x] Go API structure and sample endpoints
-- [ ] Run both applications locally
-- [ ] Replace sample data with PostgreSQL
+- [x] Run both applications locally
+- [x] Replace sample data with PostgreSQL (`api/migrations/`)
+- [x] 7 curated profile theme presets (`themes` table, picker on the feed)
 - [ ] Add a real create-OoTD flow
 
 ## Local prerequisites
 
 - Node.js 22+ and npm
 - Go 1.22+
-- PostgreSQL (needed in the next milestone, not yet for the sample API)
+- PostgreSQL 16+ (local server for the API; Supabase or any Postgres works via `DATABASE_URL`)
 
 ## Run the web app
 
@@ -47,11 +48,30 @@ go run ./cmd/api
 
 The API runs at `http://localhost:8080` by default.
 
+Required env (copy `api/.env.example` to `api/.env`; the API does not read `.env` itself, so export it or use `set -a; . ./.env`):
+
+```text
+DATABASE_URL   Postgres connection string
+PORT           default 8080
+ALLOWED_ORIGIN web origin for CORS, default http://localhost:5173
+```
+
+Local Postgres without Docker:
+
+```sh
+initdb -D api/tmp/pgdata -U ootd --auth=trust
+pg_ctl -D api/tmp/pgdata -o "-p 5433 -k /tmp -c listen_addresses=''" -l api/tmp/pg.log start
+createdb -h /tmp -p 5433 -U ootd ootd
+```
+
+Migrations in `api/migrations/*.sql` are applied automatically on API start. Set `VITE_API_URL` in `web/.env` if the API is not on `localhost:8080`.
+
 Useful starter endpoints:
 
 ```text
 GET /health
 GET /v1/outfits
+GET /v1/themes
 ```
 
 The frontend shows preview data when the API is not running, then automatically uses the API when it becomes available.

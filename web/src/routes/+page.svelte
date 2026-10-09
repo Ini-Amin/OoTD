@@ -1,22 +1,46 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { previewOutfits, type Outfit } from '$lib/outfits';
+	import { presetThemes, themeStyle, type Theme } from '$lib/themes';
+
+	const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:8080';
 
 	let outfits = $state<Outfit[]>(previewOutfits);
 	let feedSource = $state<'preview' | 'api'>('preview');
+	let themes = $state<Theme[]>(presetThemes);
+	let themeSlug = $state(presetThemes[0].slug);
+	let theme = $derived(themes.find((t) => t.slug === themeSlug) ?? themes[0]);
+
+	$effect(() => {
+		document.documentElement.style.cssText = themeStyle(theme);
+	});
+
+	function pickTheme(slug: string) {
+		themeSlug = slug;
+		localStorage.setItem('ootd-theme', slug);
+	}
 
 	onMount(async () => {
-		try {
-			const response = await fetch('http://localhost:8080/v1/outfits');
-			if (!response.ok) throw new Error('The API did not return a successful response.');
+		themeSlug = localStorage.getItem('ootd-theme') ?? themeSlug;
 
-			const payload = (await response.json()) as { outfits: Outfit[] };
+		try {
+			const [outfitRes, themeRes] = await Promise.all([
+				fetch(`${apiBase}/v1/outfits`),
+				fetch(`${apiBase}/v1/themes`)
+			]);
+			if (!outfitRes.ok) throw new Error('The API did not return a successful response.');
+
+			const payload = (await outfitRes.json()) as { outfits: Outfit[] };
 			if (payload.outfits.length > 0) {
 				outfits = payload.outfits;
 				feedSource = 'api';
 			}
+			if (themeRes.ok) {
+				const t = (await themeRes.json()) as { themes: Theme[] };
+				if (t.themes.length > 0) themes = t.themes;
+			}
 		} catch {
-			// The API is optional during this first milestone, so local preview data remains visible.
+			// The API is optional, so local preview data and preset themes remain visible.
 		}
 	});
 </script>
@@ -98,7 +122,60 @@
 	</section>
 </main>
 
+<aside class="theme-picker" aria-label="Choose a theme">
+	{#each themes as t}
+		<button
+			type="button"
+			class:selected={t.slug === theme.slug}
+			aria-pressed={t.slug === theme.slug}
+			aria-label={`${t.name} theme`}
+			title={t.name}
+			style={`--sw-bg:${t.bg};--sw-accent:${t.accent}`}
+			onclick={() => pickTheme(t.slug)}
+		></button>
+	{/each}
+</aside>
+
 <style>
+	:global(:root) {
+		/* SSR/first-paint fallback = the "minimal" preset */
+		--t-bg: #fafafa;
+		--t-surface: #ffffff;
+		--t-fg: #1c1c1c;
+		--t-accent: #1c1c1c;
+		--t-font: Inter, ui-sans-serif, system-ui, sans-serif;
+		--t-radius: 1.25rem;
+		--t-muted: color-mix(in srgb, #1c1c1c 68%, #fafafa);
+		--t-tint: color-mix(in srgb, #1c1c1c 8%, #fafafa);
+		--t-line: color-mix(in srgb, #1c1c1c 16%, #fafafa);
+	}
+
+	.theme-picker {
+		position: fixed;
+		right: 1rem;
+		bottom: 1rem;
+		display: flex;
+		gap: 0.5rem;
+		padding: 0.5rem 0.7rem;
+		border: 1px solid var(--t-line);
+		border-radius: 999px;
+		background: var(--t-surface);
+		box-shadow: 0 6px 24px rgb(0 0 0 / 12%);
+	}
+
+	.theme-picker button {
+		width: 1.6rem;
+		height: 1.6rem;
+		border: 2px solid var(--sw-accent);
+		border-radius: 50%;
+		background: linear-gradient(135deg, var(--sw-bg) 50%, var(--sw-accent) 50%);
+		padding: 0;
+	}
+
+	.theme-picker button.selected {
+		outline: 2px solid var(--t-fg);
+		outline-offset: 2px;
+	}
 	:global(*) {
 		box-sizing: border-box;
 	}
@@ -106,9 +183,9 @@
 	:global(body) {
 		margin: 0;
 		min-width: 320px;
-		background: #fffaf6;
-		color: #231f20;
-		font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+		background: var(--t-bg);
+		color: var(--t-fg);
+		font-family: var(--t-font);
 	}
 
 	button,
@@ -131,7 +208,7 @@
 	}
 
 	.wordmark {
-		color: #231f20;
+		color: var(--t-fg);
 		font-family: Georgia, serif;
 		font-size: 1.65rem;
 		font-weight: 700;
@@ -140,7 +217,7 @@
 	}
 
 	.wordmark span {
-		color: #e55c40;
+		color: var(--t-accent);
 	}
 
 	nav {
@@ -149,14 +226,14 @@
 	}
 
 	nav a {
-		color: #776e6c;
+		color: var(--t-muted);
 		font-size: 0.9rem;
 		text-decoration: none;
 	}
 
 	nav a.active,
 	nav a:hover {
-		color: #231f20;
+		color: var(--t-fg);
 		font-weight: 700;
 	}
 
@@ -164,8 +241,8 @@
 	.primary-button {
 		border: 0;
 		border-radius: 999px;
-		background: #231f20;
-		color: white;
+		background: var(--t-fg);
+		color: var(--t-bg);
 		font-weight: 700;
 	}
 
@@ -186,7 +263,7 @@
 
 	.eyebrow {
 		margin: 0 0 0.75rem;
-		color: #e55c40;
+		color: var(--t-accent);
 		font-size: 0.72rem;
 		font-weight: 800;
 		letter-spacing: 0.12em;
@@ -202,7 +279,7 @@
 
 	h1,
 	h2 {
-		font-family: Georgia, serif;
+		font-family: var(--t-font);
 		letter-spacing: -0.06em;
 	}
 
@@ -215,7 +292,7 @@
 
 	.hero-copy {
 		max-width: 550px;
-		color: #635a58;
+		color: var(--t-muted);
 		font-size: 1.15rem;
 		line-height: 1.65;
 	}
@@ -235,7 +312,7 @@
 	.text-button {
 		border: 0;
 		background: transparent;
-		color: #231f20;
+		color: var(--t-fg);
 		font-weight: 700;
 	}
 
@@ -260,8 +337,8 @@
 	.data-status {
 		margin: 0;
 		border-radius: 999px;
-		background: #f1e9e3;
-		color: #776e6c;
+		background: var(--t-tint);
+		color: var(--t-muted);
 		padding: 0.5rem 0.8rem;
 		font-size: 0.76rem;
 		font-weight: 700;
@@ -269,7 +346,7 @@
 
 	.data-status span {
 		margin-right: 0.3rem;
-		color: #c6b6ad;
+		color: var(--t-line);
 	}
 
 	.data-status.connected {
@@ -289,9 +366,9 @@
 
 	.outfit-card {
 		overflow: hidden;
-		border: 1px solid #eadfd8;
-		border-radius: 1.25rem;
-		background: #fff;
+		border: 1px solid var(--t-line);
+		border-radius: var(--t-radius);
+		background: var(--t-surface);
 	}
 
 	.outfit-visual {
@@ -352,7 +429,7 @@
 
 	.handle {
 		margin-top: 0.2rem;
-		color: #887d7a;
+		color: var(--t-muted);
 		font-size: 0.73rem;
 	}
 
@@ -360,13 +437,13 @@
 		margin-left: auto;
 		border: 0;
 		background: transparent;
-		color: #887d7a;
+		color: var(--t-muted);
 		letter-spacing: 0.05em;
 	}
 
 	h3 {
 		margin: 1.2rem 0 0.55rem;
-		font-family: Georgia, serif;
+		font-family: var(--t-font);
 		font-size: 1.35rem;
 		letter-spacing: -0.04em;
 		line-height: 1.05;
@@ -375,7 +452,7 @@
 	.caption {
 		min-height: 4.2em;
 		margin-bottom: 1rem;
-		color: #6d6461;
+		color: var(--t-muted);
 		font-size: 0.86rem;
 		line-height: 1.5;
 	}
@@ -388,8 +465,8 @@
 
 	.tag-list span {
 		border-radius: 999px;
-		background: #fbf4ef;
-		color: #776e6c;
+		background: var(--t-tint);
+		color: var(--t-muted);
 		padding: 0.35rem 0.55rem;
 		font-size: 0.68rem;
 		font-weight: 700;
@@ -402,15 +479,15 @@
 		gap: 0.5rem;
 		margin-top: 1.15rem;
 		padding-top: 0.85rem;
-		border-top: 1px solid #f0e8e3;
-		color: #776e6c;
+		border-top: 1px solid var(--t-line);
+		color: var(--t-muted);
 		font-size: 0.75rem;
 	}
 
 	.card-footer button {
 		border: 0;
 		background: transparent;
-		color: #231f20;
+		color: var(--t-fg);
 		font-size: 0.75rem;
 		font-weight: 800;
 	}
