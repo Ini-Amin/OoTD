@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { resolve } from '$app/paths';
 	import Mannequin3D from '$lib/Mannequin3D.svelte';
 	import CraftRequestForm from '$lib/CraftRequestForm.svelte';
 	import CategoryIcon from '$lib/CategoryIcon.svelte';
@@ -43,7 +44,7 @@
 	let isClosetEmpty = $derived(closet.pieces.length === 0);
 
 	let aiSearchHref = $derived.by(() => {
-		if (closet.pieces.length === 0) return '/';
+		if (closet.pieces.length === 0) return resolve('/');
 		const wornLabels = CATEGORIES
 			.map((cat) => closet.wornPiece(cat)?.label)
 			.filter((l): l is string => Boolean(l && l.trim()));
@@ -51,7 +52,7 @@
 			wornLabels.length > 0
 				? wornLabels.join(' ')
 				: (closet.pieces[0]?.label ?? '');
-		return `/?q=${encodeURIComponent(query.trim())}`;
+		return `${resolve('/')}?q=${encodeURIComponent(query.trim())}`;
 	});
 
 	let requestPiece = $derived.by(() => {
@@ -92,19 +93,33 @@
 </script>
 
 <svelte:head>
-	<title>Mannequin — OoTD</title>
+	<title>Fitting room — OoTD</title>
+	<meta name="description" content="Combine your saved outfit pieces on an interactive 3D mannequin. Explore every angle in your personal OoTD fitting room." />
 </svelte:head>
 
+<header class="studio-header">
+	<div>
+		<p class="studio-eyebrow">YOUR PERSONAL FITTING ROOM</p>
+		<h1>Make the look yours.</h1>
+		<p>Mix your saved pieces. See every angle.</p>
+	</div>
+	<a href={resolve('/')}>Discover more looks &rarr;</a>
+</header>
 <main class="mannequin-page">
 	<section class="mannequin-col" aria-label="3D Mannequin">
 		<div class="mannequin-viewport">
-			<Mannequin3D {worn} height="72vh" />
+			<Mannequin3D {worn} height="clamp(360px, 58vh, 680px)" />
+			<div class="viewer-caption">
+				<p>Drag to rotate · Scroll or pinch to zoom</p>
+				<p>Style preview only. Photo textures do not simulate garment fit.</p>
+			</div>
 		</div>
 		<div class="mannequin-underbar">
 			<button
 				type="button"
 				class="clear-mannequin-button"
 				onclick={clearMannequin}
+				disabled={!CATEGORIES.some((cat) => worn[cat])}
 			>
 				Clear mannequin
 			</button>
@@ -112,7 +127,7 @@
 	</section>
 
 	<section class="closet-col" aria-label="Your closet">
-		<h1 class="closet-title">Your closet</h1>
+		<h2 class="closet-title">Your closet</h2>
 
 		{#if closet.pieces.length === 0}
 			<div class="empty-closet">
@@ -120,7 +135,7 @@
 				<p class="empty-line">
 					Open any look and tap a piece icon (hat, top, shoes...) to save it here.
 				</p>
-				<a href="/" class="empty-link">Browse looks &rarr;</a>
+				<a href={resolve('/')} class="empty-link">Browse looks &rarr;</a>
 			</div>
 		{/if}
 
@@ -222,6 +237,22 @@
 </dialog>
 
 <style>
+	.studio-header {
+		width: min(1380px, calc(100% - 2.5rem));
+		margin: 1.5rem auto 0;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: end;
+		justify-content: space-between;
+		gap: 1rem;
+	}
+	.studio-header h1 { font-size: clamp(1.75rem, 4vw, 2.75rem); letter-spacing: -0.05em; margin: 0.5rem 0; }
+	.studio-header p { margin: 0; color: var(--t-muted); font-size: 0.875rem; line-height: 1.5; }
+	.studio-header .studio-eyebrow { letter-spacing: 0.12em; }
+	.studio-header a { font-size: 0.875rem; color: var(--t-fg); text-underline-offset: 4px; }
+	.viewer-caption { padding: 0.75rem 1rem 1rem; text-align: center; }
+	.viewer-caption p { margin: 0; color: var(--t-muted); font-size: 0.875rem; line-height: 1.6; }
+	.clear-mannequin-button:disabled { opacity: 0.5; cursor: not-allowed; }
 	.mannequin-page {
 		width: min(1380px, calc(100% - 2.5rem));
 		margin: 0 auto;

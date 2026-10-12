@@ -22,8 +22,29 @@
 	};
 
 	let containerEl: HTMLDivElement | undefined = $state();
+	let canvasEl: HTMLCanvasElement | undefined = $state();
 	let webglError = $state(false);
 	let mounted = $state(false);
+	let activeView = $state('Front');
+	let fitDistance = 2.7;
+
+	function setView(name: string, angle: number): void {
+		if (!camera || !controls) return;
+		activeView = name;
+		controls.target.set(0, 0.88, 0);
+		camera.position.set(Math.sin(angle) * fitDistance, 1.05, Math.cos(angle) * fitDistance);
+		controls.update();
+		requestFrame();
+	}
+
+	function zoom(factor: number): void {
+		if (!camera || !controls) return;
+		const offset = camera.position.clone().sub(controls.target);
+		offset.setLength(THREE.MathUtils.clamp(offset.length() * factor, controls.minDistance, controls.maxDistance));
+		camera.position.copy(controls.target).add(offset);
+		controls.update();
+		requestFrame();
+	}
 
 	let destroyed = false;
 	let animating = false;
@@ -211,8 +232,8 @@
 					24,
 					1,
 					false,
-					-0.85 * Math.PI,
-					1.7 * Math.PI
+					0,
+					Math.PI * 2
 				);
 				const hatMesh = new THREE.Mesh(hatGeo, material);
 				hatMesh.position.set(0, 1.74, 0.02);
@@ -222,21 +243,28 @@
 				break;
 			}
 			case 'top': {
-				const topGeo = new THREE.CylinderGeometry(
-					0.235,
-					0.19,
-					0.52,
-					28,
-					1,
-					true,
-					-0.85 * Math.PI,
-					1.7 * Math.PI
-				);
+				const group = new THREE.Group();
+				const profile = new THREE.SplineCurve([
+					new THREE.Vector2(0.207, 0.89),
+					new THREE.Vector2(0.19, 1.1),
+					new THREE.Vector2(0.228, 1.3),
+					new THREE.Vector2(0.225, 1.375),
+					new THREE.Vector2(0.075, 1.44)
+				]);
+				const topGeo = new THREE.LatheGeometry(profile.getPoints(32), 40);
 				const topMesh = new THREE.Mesh(topGeo, material);
-				topMesh.position.set(0, 1.14, 0);
-				topMesh.scale.set(1.03, 1, 0.82);
-				entry.object = topMesh;
+				topMesh.scale.z = 0.78;
+				group.add(topMesh);
 				entry.geometries.push(topGeo);
+				const sleeveGeo = new THREE.CylinderGeometry(0.079, 0.075, 0.23, 24, 1, true);
+				for (const side of [-1, 1]) {
+					const sleeve = new THREE.Mesh(sleeveGeo, material);
+					sleeve.position.set(side * 0.253, 1.29, 0);
+					sleeve.rotation.z = side * 0.28;
+					group.add(sleeve);
+				}
+				entry.geometries.push(sleeveGeo);
+				entry.object = group;
 				break;
 			}
 			case 'bottom': {
@@ -250,8 +278,8 @@
 					28,
 					1,
 					true,
-					-0.85 * Math.PI,
-					1.7 * Math.PI
+					0,
+					Math.PI * 2
 				);
 				const hipMesh = new THREE.Mesh(hipGeo, material);
 				hipMesh.position.set(0, 0.85, 0);
@@ -267,8 +295,8 @@
 					20,
 					1,
 					true,
-					-0.85 * Math.PI,
-					1.7 * Math.PI
+					0,
+					Math.PI * 2
 				);
 				const leftLegShell = new THREE.Mesh(legShellGeo, material);
 				leftLegShell.position.set(-0.11, 0.44, 0);
@@ -283,11 +311,12 @@
 			}
 			case 'shoes': {
 				const shoeGroup = new THREE.Group();
-				const shoeGeo = new THREE.BoxGeometry(0.09, 0.07, 0.18);
+				const shoeGeo = new THREE.SphereGeometry(1, 24, 16);
+				shoeGeo.scale(0.066, 0.065, 0.12);
 				const leftShoe = new THREE.Mesh(shoeGeo, material);
-				leftShoe.position.set(-0.11, 0.035, 0.05);
+				leftShoe.position.set(-0.11, 0.06, 0.05);
 				const rightShoe = new THREE.Mesh(shoeGeo, material);
-				rightShoe.position.set(0.11, 0.035, 0.05);
+				rightShoe.position.set(0.11, 0.06, 0.05);
 				rightShoe.scale.set(-1, 1, 1);
 				shoeGroup.add(leftShoe);
 				shoeGroup.add(rightShoe);
@@ -425,10 +454,11 @@
 	});
 
 	onMount(() => {
-		if (!containerEl) return;
+		if (!containerEl || !canvasEl) return;
 
 		try {
 			renderer = new THREE.WebGLRenderer({
+				canvas: canvasEl,
 				alpha: true,
 				antialias: true,
 				powerPreference: 'high-performance'
@@ -461,7 +491,7 @@
 		renderer.domElement.style.width = '100%';
 		renderer.domElement.style.height = '100%';
 		renderer.domElement.style.display = 'block';
-		containerEl.appendChild(renderer.domElement);
+
 
 		textureLoader = new THREE.TextureLoader();
 		textureLoader.setCrossOrigin('anonymous');
@@ -469,7 +499,8 @@
 		const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 		controls = new OrbitControls(camera, activeRenderer.domElement);
 		const activeControls = controls;
-		controls.dampingFactor = prefersReducedMotion ? 0.2 : 0.05;
+		controls.enableDamping = !prefersReducedMotion;
+		controls.dampingFactor = 0.08;
 		controls.enablePan = false;
 		controls.autoRotate = false;
 		controls.minDistance = 1.0;
@@ -491,10 +522,14 @@
 		dirLight.position.set(2, 3, 3);
 		scene.add(dirLight);
 
+		const rimLight = new THREE.DirectionalLight(0xffffff, 1.4);
+		rimLight.position.set(-2, 2, -2);
+		scene.add(rimLight);
+
 		mannequinMaterial = new THREE.MeshStandardMaterial({
-			color: mannequinColor,
-			roughness: 0.85,
-			metalness: 0.05
+			color: mannequinColor.clone().lerp(new THREE.Color('#737373'), 0.3),
+			roughness: 0.48,
+			metalness: 0.12
 		});
 
 		mannequinGroup = new THREE.Group();
@@ -506,53 +541,43 @@
 		mannequinGeometries.push(baseGeo);
 		mannequinGroup.add(baseMesh);
 
-		// Two legs (about 46.7% of total height, feet on y=0)
-		const legGeo = new THREE.CylinderGeometry(0.075, 0.05, 0.84, 20);
-		const leftLeg = new THREE.Mesh(legGeo, mannequinMaterial);
-		leftLeg.position.set(-0.11, 0.42, 0);
-		const rightLeg = new THREE.Mesh(legGeo, mannequinMaterial);
-		rightLeg.position.set(0.11, 0.42, 0);
-		mannequinGeometries.push(legGeo);
-		mannequinGroup.add(leftLeg, rightLeg);
+		const addBody = (
+			geometry: THREE.BufferGeometry,
+			position: [number, number, number],
+			scale: [number, number, number] = [1, 1, 1],
+			angle = 0
+		) => {
+			const mesh = new THREE.Mesh(geometry, mannequinMaterial!);
+			mesh.position.set(...position);
+			mesh.scale.set(...scale);
+			mesh.rotation.z = angle;
+			mannequinGeometries.push(geometry);
+			mannequinGroup!.add(mesh);
+		};
 
-		// Torso (LatheGeometry with hips, waist, chest, shoulders)
-		const torsoPoints = [
-			new THREE.Vector2(0.18, 0.84),
-			new THREE.Vector2(0.19, 0.95),
-			new THREE.Vector2(0.16, 1.1),
-			new THREE.Vector2(0.21, 1.28),
-			new THREE.Vector2(0.23, 1.38),
-			new THREE.Vector2(0.1, 1.42)
-		];
-		const torsoGeo = new THREE.LatheGeometry(torsoPoints, 28);
-		const torsoMesh = new THREE.Mesh(torsoGeo, mannequinMaterial);
-		torsoMesh.scale.set(1, 1, 0.75);
-		mannequinGeometries.push(torsoGeo);
-		mannequinGroup.add(torsoMesh);
+		for (const side of [-1, 1]) {
+			addBody(new THREE.CapsuleGeometry(0.077, 0.26, 12, 24), [side * 0.105, 0.67, 0], [1, 1, 1.12]);
+			addBody(new THREE.CapsuleGeometry(0.053, 0.28, 12, 24), [side * 0.11, 0.28, 0]);
+			addBody(new THREE.SphereGeometry(0.055, 24, 16), [side * 0.11, 0.052, 0.052], [1, 0.85, 1.9]);
+			addBody(new THREE.SphereGeometry(0.069, 24, 16), [side * 0.205, 1.355, 0]);
+			addBody(new THREE.CapsuleGeometry(0.05, 0.19, 12, 24), [side * 0.263, 1.225, 0], [1, 1, 1], side * 0.28);
+			addBody(new THREE.CapsuleGeometry(0.039, 0.18, 12, 24), [side * 0.32, 0.99, 0.015], [1, 1, 1], side * 0.15);
+			addBody(new THREE.SphereGeometry(0.043, 24, 16), [side * 0.343, 0.815, 0.023], [0.8, 1.65, 0.55]);
+		}
 
-		// Neck
-		const neckGeo = new THREE.CylinderGeometry(0.065, 0.075, 0.1, 20);
-		const neckMesh = new THREE.Mesh(neckGeo, mannequinMaterial);
-		neckMesh.position.set(0, 1.47, 0);
-		mannequinGeometries.push(neckGeo);
-		mannequinGroup.add(neckMesh);
-
-		// Head (sphere)
-		const headGeo = new THREE.SphereGeometry(0.12, 24, 20);
-		const headMesh = new THREE.Mesh(headGeo, mannequinMaterial);
-		headMesh.position.set(0, 1.66, 0);
-		mannequinGeometries.push(headGeo);
-		mannequinGroup.add(headMesh);
-		// Two arms (capsules angled slightly out)
-		const armGeo = new THREE.CapsuleGeometry(0.045, 0.44, 8, 16);
-		const leftArm = new THREE.Mesh(armGeo, mannequinMaterial);
-		leftArm.position.set(-0.22, 1.13, 0);
-		leftArm.rotation.z = 0.1;
-		const rightArm = new THREE.Mesh(armGeo, mannequinMaterial);
-		rightArm.position.set(0.22, 1.13, 0);
-		rightArm.rotation.z = -0.1;
-		mannequinGeometries.push(armGeo);
-		mannequinGroup.add(leftArm, rightArm);
+		// Smooth the profile rather than exposing hard lathe rings at the waist and shoulders.
+		const profile = new THREE.SplineCurve([
+			new THREE.Vector2(0.09, 0.79),
+			new THREE.Vector2(0.18, 0.88),
+			new THREE.Vector2(0.18, 0.96),
+			new THREE.Vector2(0.145, 1.1),
+			new THREE.Vector2(0.2, 1.28),
+			new THREE.Vector2(0.205, 1.36),
+			new THREE.Vector2(0.065, 1.43)
+		]);
+		addBody(new THREE.LatheGeometry(profile.getPoints(48), 48), [0, 0, 0], [1, 1, 0.7]);
+		addBody(new THREE.CylinderGeometry(0.052, 0.063, 0.13, 32), [0, 1.475, 0]);
+		addBody(new THREE.SphereGeometry(0.105, 32, 24), [0, 1.635, 0], [0.88, 1.3, 0.95]);
 
 		scene.add(mannequinGroup);
 
@@ -562,12 +587,29 @@
 				const { width, height: h } = entry.contentRect;
 				if (width <= 0 || h <= 0) continue;
 				camera.aspect = width / h;
+				const verticalFov = THREE.MathUtils.degToRad(camera.fov);
+				fitDistance = Math.max(1.08 / Math.tan(verticalFov / 2), 0.55 / (Math.tan(verticalFov / 2) * camera.aspect));
+				if (controls) {
+					controls.maxDistance = Math.max(4, fitDistance * 1.5);
+					const offset = camera.position.clone().sub(controls.target).normalize().multiplyScalar(fitDistance);
+					camera.position.copy(controls.target).add(offset);
+				}
 				camera.updateProjectionMatrix();
 				renderer.setSize(width, h, false);
 				requestFrame();
 			}
 		});
 		resizeObserver.observe(containerEl);
+		const markCustomView = () => { activeView = 'Custom'; };
+		activeControls.addEventListener('start', markCustomView);
+		const themeObserver = new MutationObserver(() => {
+			if (!containerEl || destroyed) return;
+			mannequinColor = getMannequinColor(containerEl);
+			lineColor = getLineColor(containerEl);
+			mannequinMaterial?.color.copy(mannequinColor).lerp(new THREE.Color('#737373'), 0.3);
+			requestFrame();
+		});
+		themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class'] });
 
 		mounted = true;
 
@@ -588,6 +630,8 @@
 				rafId = null;
 			}
 			resizeObserver.disconnect();
+			themeObserver.disconnect();
+			activeControls.removeEventListener('start', markCustomView);
 			activeControls.removeEventListener('start', requestFrame);
 			activeControls.removeEventListener('change', requestFrame);
 			activeControls.removeEventListener('end', requestFrame);
@@ -607,12 +651,23 @@
 			mannequinMaterial?.dispose();
 
 			activeRenderer.dispose();
-			if (activeRenderer.domElement.parentElement === containerEl) {
-				containerEl.removeChild(activeRenderer.domElement);
-			}
+
 		};
 	});
 </script>
+
+<div class="viewer-toolbar" aria-label="Mannequin camera controls">
+	<div class="view-buttons">
+		{#each [{ name: 'Front', angle: 0 }, { name: 'Side', angle: Math.PI / 2 }, { name: 'Back', angle: Math.PI }] as view (view.name)}
+			<button type="button" disabled={!mounted || webglError} aria-pressed={activeView === view.name} onclick={() => setView(view.name, view.angle)}>{view.name}</button>
+		{/each}
+	</div>
+	<div class="view-buttons">
+		<button type="button" disabled={!mounted || webglError} aria-label="Zoom out" onclick={() => zoom(1.15)}>−</button>
+		<button type="button" disabled={!mounted || webglError} aria-label="Zoom in" onclick={() => zoom(0.85)}>+</button>
+		<button type="button" disabled={!mounted || webglError} onclick={() => setView('Front', 0)}>Reset view</button>
+	</div>
+</div>
 
 <div
 	bind:this={containerEl}
@@ -621,6 +676,7 @@
 	role="img"
 	aria-label={ariaLabel}
 >
+	<canvas bind:this={canvasEl} hidden={webglError}></canvas>
 	{#if webglError}
 		<div class="webgl-fallback">
 			<p>3D preview needs WebGL. Your pieces are still saved.</p>
@@ -629,6 +685,33 @@
 </div>
 
 <style>
+	.viewer-toolbar {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: space-between;
+		gap: 0.5rem;
+		padding: 0.75rem;
+		border-bottom: 1px solid var(--t-line);
+		background: var(--t-surface);
+		color: var(--t-fg);
+	}
+	.view-buttons { display: flex; gap: 0.25rem; }
+	.viewer-toolbar button {
+		min-height: 40px;
+		min-width: 40px;
+		padding: 0.5rem 0.65rem;
+		border: 1px solid transparent;
+		border-radius: 0.65rem;
+		background: transparent;
+		color: var(--t-muted);
+		font-size: 0.875rem;
+	}
+	.viewer-toolbar button:hover, .viewer-toolbar button[aria-pressed='true'] {
+		background: var(--t-tint);
+		color: var(--t-fg);
+	}
+	.viewer-toolbar button:focus-visible { outline: 2px solid var(--t-accent); outline-offset: 2px; }
+	.viewer-toolbar button:disabled { opacity: 0.5; cursor: not-allowed; }
 	.mannequin-container {
 		position: relative;
 		width: 100%;
@@ -646,6 +729,8 @@
 		height: 100%;
 		touch-action: none;
 	}
+
+	.mannequin-container canvas[hidden] { display: none !important; }
 
 	.webgl-fallback {
 		display: flex;
