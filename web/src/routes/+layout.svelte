@@ -3,6 +3,7 @@
 	import favicon from '$lib/assets/favicon.svg';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { themeStyle } from '$lib/themes';
 	import { theme } from '$lib/theme.svelte';
 	import { saved } from '$lib/saved.svelte';
@@ -39,9 +40,9 @@
 		e.preventDefault();
 		const trimmed = q.trim();
 		if (trimmed) {
-			goto('/?q=' + encodeURIComponent(trimmed));
+			goto(resolve('/') + '?q=' + encodeURIComponent(trimmed));
 		} else {
-			goto('/');
+			goto(resolve('/'));
 		}
 	}
 </script>
@@ -53,7 +54,7 @@
 <div class="app-layout">
 	<header class="site-header">
 		<div class="header-left">
-			<a class="wordmark" href="/" aria-label="OoTD home">OoTD</a>
+			<a class="wordmark" href={resolve('/')} aria-label="OoTD home">OoTD</a>
 		</div>
 
 		<form class="search-form" role="search" onsubmit={handleSearch}>
@@ -72,13 +73,16 @@
 		</form>
 
 		<div class="header-right">
-			<a class="create-link" href="/new">+ Create</a>
+			<a class="create-link" href={resolve('/new')}>+ Create</a>
 		</div>
 	</header>
 
 	<nav class="right-rail" aria-label="Primary navigation">
+		<a href={resolve('/world')} class="rail-item" class:active={pathname.startsWith('/world')} aria-current={pathname.startsWith('/world') ? 'page' : undefined} aria-label="World" title="World">
+			<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9" /><ellipse cx="12" cy="12" rx="4" ry="9" /><path d="M3 12h18" /></svg>
+		</a>
 		<a
-			href="/"
+			href={resolve('/')}
 			class="rail-item"
 			class:active={isDiscover}
 			aria-current={isDiscover ? 'page' : undefined}
@@ -91,7 +95,7 @@
 			</svg>
 		</a>
 		<a
-			href="/mannequin"
+			href={resolve('/mannequin')}
 			class="rail-item"
 			class:active={isMannequin}
 			aria-current={isMannequin ? 'page' : undefined}
@@ -105,7 +109,7 @@
 			</svg>
 		</a>
 		<a
-			href="/saved"
+			href={resolve('/saved')}
 			class="rail-item"
 			class:active={isSaved}
 			aria-current={isSaved ? 'page' : undefined}
@@ -124,7 +128,7 @@
 	</div>
 
 	<aside class="theme-picker" aria-label="Choose a theme">
-		{#each theme.themes as t}
+		{#each theme.themes as t (t.slug)}
 			<button
 				type="button"
 				class:selected={t.slug === current.slug}
