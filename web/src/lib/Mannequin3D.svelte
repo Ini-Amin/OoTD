@@ -125,7 +125,10 @@
 	function getMannequinColor(container: HTMLElement): THREE.Color {
 		try {
 			const probe = document.createElement('span');
-			probe.style.color = 'var(--t-mannequin, color-mix(in srgb, var(--t-fg) 22%, var(--t-surface)))';
+			// 28%: at 22% the figure sat ~10% away from the panel luminance,
+			// which is visible in a screenshot but marginal on a dim laptop
+			// screen. 28% keeps it a soft neutral while clearing the panel.
+			probe.style.color = 'var(--t-mannequin, color-mix(in srgb, var(--t-fg) 28%, var(--t-surface)))';
 			probe.style.display = 'none';
 			container.appendChild(probe);
 			const css = window.getComputedStyle(probe).color;
