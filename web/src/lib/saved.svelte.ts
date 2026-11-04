@@ -74,7 +74,7 @@ class SavedStore {
 		this.#persist();
 	}
 
-	/** Replace local items with the server save list, hydrated per outfit. No-op when logged out or on network error (local fallback kept). */
+	/** Merge the server save list with anonymous local saves (union, no dupes): local-only ids are pushed up first so signing in never loses them, then everything is hydrated. No-op when logged out or on network error (local fallback kept). */
 	async loadFromServer(): Promise<void> {
 		const token = auth.token;
 		if (typeof window === 'undefined' || !token) return;
@@ -85,11 +85,19 @@ class SavedStore {
 			if (!res.ok) return;
 			const data = (await res.json()) as { outfitIds?: unknown };
 			if (!Array.isArray(data.outfitIds)) return;
-			const ids = data.outfitIds.filter((v): v is string => typeof v === 'string').slice(0, 50);
+			const serverIds = data.outfitIds
+				.filter((v): v is string => typeof v === 'string')
+				.slice(0, 50);
+			const serverSet = new Set(serverIds);
+			// Push anonymous local saves up. Idempotent; preview/deleted ids
+			// simply fail server-side and stay local-only.
+			const localOnly = this.ids.filter((id) => !serverSet.has(id));
+			await Promise.all(localOnly.map((id) => serverSave(id, true)));
 			// Follow-up: add a batch endpoint (e.g. GET /v1/outfits?ids=...) to
 			// avoid N+1 per-id fetches here.
+			const needBodies = serverIds.filter((id) => !this.#items.some((o) => o.id === id));
 			const results = await Promise.all(
-				ids.map(async (outfitId): Promise<Outfit | null> => {
+				needBodies.map(async (outfitId): Promise<Outfit | null> => {
 					try {
 						const r = await fetch(`${apiBase}/v1/outfits/${encodeURIComponent(outfitId)}`);
 						if (!r.ok) return null;
@@ -100,9 +108,15 @@ class SavedStore {
 					}
 				})
 			);
-			const valid = results.filter((o): o is Outfit => o !== null);
-			this.#items = valid;
-			this.ids = valid.map((o) => o.id);
+			const byId = new Map(this.#items.map((o) => [o.id, o]));
+			for (const o of results) {
+				if (o !== null && !byId.has(o.id)) byId.set(o.id, o);
+			}
+			const merged = [...serverIds, ...localOnly]
+				.map((id) => byId.get(id))
+				.filter((o): o is Outfit => o !== undefined);
+			this.#items = merged;
+			this.ids = merged.map((o) => o.id);
 			this.#persist();
 		} catch {
 			// keep local fallback
