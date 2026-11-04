@@ -83,6 +83,9 @@ func NewServer(db *pgxpool.Pool, auth *Authenticator, allowedOrigin string) http
 	mux.HandleFunc("GET /v1/me", s.auth.requireAuth(s.getMe))
 	mux.HandleFunc("POST /v1/me", s.auth.requireAuth(s.postMe))
 	mux.HandleFunc("GET /v1/users/{username}", s.getUser)
+	mux.HandleFunc("POST /v1/users/{username}/follow", s.auth.requireAuth(s.followUser))
+	mux.HandleFunc("DELETE /v1/users/{username}/follow", s.auth.requireAuth(s.unfollowUser))
+	mux.HandleFunc("GET /v1/users/{username}/follow-state", s.auth.requireAuth(s.followState))
 	mux.HandleFunc("GET /v1/themes", s.listThemes)
 	mux.HandleFunc("GET /v1/search", s.searchOutfits)
 	mux.HandleFunc("POST /v1/requests", s.auth.requireAuth(s.createCraftRequest))
@@ -321,9 +324,22 @@ func (s *server) getUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID, err := s.userIDByUsername(r, username)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	followerCount, followingCount, err := s.followCounts(r, userID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user":    u,
-		"outfits": outfits,
+		"user":           u,
+		"outfits":        outfits,
+		"followerCount":  followerCount,
+		"followingCount": followingCount,
 	})
 }
 
@@ -460,7 +476,7 @@ func (s *server) listThemes(w http.ResponseWriter, r *http.Request) {
 func withCORS(next http.Handler, allowedOrigin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 		if r.Method == http.MethodOptions {

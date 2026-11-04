@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { apiBase, type Outfit } from '$lib/outfits';
+	import { auth, authHeaders } from '$lib/auth.svelte';
 	import OutfitCard from '$lib/OutfitCard.svelte';
 	import { saved } from '$lib/saved.svelte';
 	import { themeStyle, type Theme } from '$lib/themes';
@@ -18,8 +19,19 @@
 	let loading = $state(true);
 	let error = $state<'notFound' | 'network' | null>(null);
 	let errorMessage = $state('');
+	let followerCount = $state(0);
+	let followingCount = $state(0);
+	let following = $state(false);
+	let followBusy = $state(false);
 
 	let handle = $derived(page.params.handle ?? '');
+
+	let showFollow = $derived(
+		auth.ready &&
+			auth.session !== null &&
+			user !== null &&
+			auth.profile?.username !== user.username
+	);
 
 	async function loadUser(rawHandle: string) {
 		if (!rawHandle) return;
@@ -33,6 +45,9 @@
 				error = 'notFound';
 				user = null;
 				outfits = [];
+				followerCount = 0;
+				followingCount = 0;
+				following = false;
 				return;
 			}
 			if (!res.ok) {
@@ -40,18 +55,67 @@
 				errorMessage = `Failed to load creator (${res.status})`;
 				user = null;
 				outfits = [];
+				followerCount = 0;
+				followingCount = 0;
+				following = false;
 				return;
 			}
-			const data = (await res.json()) as { user: UserProfile; outfits?: Outfit[] };
+			const data = (await res.json()) as {
+				user: UserProfile;
+				outfits?: Outfit[];
+				followerCount?: number;
+				followingCount?: number;
+			};
 			user = data.user;
 			outfits = Array.isArray(data.outfits) ? data.outfits : [];
+			followerCount = typeof data.followerCount === 'number' ? data.followerCount : 0;
+			followingCount = typeof data.followingCount === 'number' ? data.followingCount : 0;
+			following = false;
 		} catch {
 			error = 'network';
 			errorMessage = 'Network error: could not connect to server.';
 			user = null;
 			outfits = [];
+			followerCount = 0;
+			followingCount = 0;
+			following = false;
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function loadFollowState(username: string) {
+		try {
+			const res = await fetch(
+				`${apiBase}/v1/users/${encodeURIComponent(username)}/follow-state`,
+				{ headers: { ...authHeaders() } }
+			);
+			if (!res.ok) return;
+			const data = (await res.json()) as { following?: boolean };
+			following = data.following === true;
+		} catch {
+			// keep default
+		}
+	}
+
+	async function toggleFollow() {
+		if (!user || followBusy) return;
+		const target = user.username;
+		const next = !following;
+		following = next;
+		followerCount += next ? 1 : -1;
+		followBusy = true;
+		try {
+			const res = await fetch(`${apiBase}/v1/users/${encodeURIComponent(target)}/follow`, {
+				method: next ? 'POST' : 'DELETE',
+				headers: { ...authHeaders() }
+			});
+			if (!res.ok) throw new Error(`follow failed (${res.status})`);
+		} catch {
+			following = !next;
+			followerCount += next ? -1 : 1;
+		} finally {
+			followBusy = false;
 		}
 	}
 
@@ -64,6 +128,14 @@
 		if (currentHandle) {
 			loadUser(currentHandle);
 		}
+	});
+
+	$effect(() => {
+		const u = user;
+		const token = auth.token;
+		if (!u || !token) return;
+		if (auth.profile?.username === u.username) return;
+		void loadFollowState(u.username);
 	});
 </script>
 
@@ -110,8 +182,23 @@
 					{#if user.bio}
 						<p class="bio">{user.bio}</p>
 					{/if}
-					<p class="outfit-count">{outfits.length} {outfits.length === 1 ? 'look' : 'looks'}</p>
+					<p class="outfit-count">
+						{outfits.length} {outfits.length === 1 ? 'look' : 'looks'} ·
+						{followerCount} {followerCount === 1 ? 'follower' : 'followers'} ·
+						{followingCount} following
+					</p>
 				</div>
+				{#if showFollow}
+					<button
+						type="button"
+						class="follow-button"
+						class:following
+						disabled={followBusy}
+						onclick={toggleFollow}
+					>
+						{following ? 'Following' : 'Follow'}
+					</button>
+				{/if}
 			</header>
 
 			{#if outfits.length === 0}
@@ -209,6 +296,30 @@
 		text-transform: uppercase;
 		color: var(--t-muted);
 		font-weight: 500;
+	}
+
+	.follow-button {
+		margin-left: auto;
+		align-self: flex-start;
+		padding: 0.5rem 1.25rem;
+		border-radius: 999px;
+		border: 1px solid var(--t-line);
+		background: var(--t-fg);
+		color: var(--t-bg);
+		font-size: 0.88rem;
+		font-weight: 500;
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+
+	.follow-button.following {
+		background: transparent;
+		color: var(--t-fg);
+	}
+
+	.follow-button:disabled {
+		opacity: 0.6;
+		cursor: wait;
 	}
 
 	.empty-state {
