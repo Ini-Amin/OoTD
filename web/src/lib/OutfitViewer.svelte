@@ -49,6 +49,13 @@
 
 	let activePiece = $derived(activeCategory ? pieces.find((p) => p.category === activeCategory) : null);
 
+	// Only outfits with real tagged pieces (e.g. via Magic Tag) get a highlight
+	// box. Synthetic suggested regions stay clickable for the closet, but never
+	// render a floating box over nothing.
+	let hasTaggedPieces = $derived(
+		!!(outfit && outfit.pieces && outfit.pieces.length > 0)
+	);
+
 	function showToast(message: string, link?: string, linkText?: string) {
 		clearTimeout(toastTimeout);
 		toast = { message, link, linkText };
@@ -239,7 +246,7 @@
 									imageError = true;
 								}}
 							/>
-							{#if activePiece}
+							{#if activePiece && hasTaggedPieces}
 								<div
 									class="piece-highlight"
 									style={`left: ${activePiece.x * 100}%; top: ${activePiece.y * 100}%; width: ${activePiece.w * 100}%; height: ${activePiece.h * 100}%;`}
@@ -679,7 +686,7 @@
 
 	.tooltip {
 		position: absolute;
-		left: calc(100% + 8px);
+		right: calc(100% + 8px);
 		top: 50%;
 		transform: translateY(-50%);
 		background: var(--t-fg);
