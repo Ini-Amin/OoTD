@@ -215,6 +215,39 @@
 		armRadius: 0.043,
 	};
 
+	// Measured GLB head-top heights in model units (bind pose, unscaled).
+	// Static GLB parse and a headless Box3 render agree: xbot 1.8061,
+	// michelle 1.6616. The rendered top is this times avatarScale().
+	const GLB_HEAD_TOP: Record<'xbot' | 'michelle', number> = {
+		xbot: 1.8061,
+		michelle: 1.6616
+	};
+
+	// The model actually on screen. Intentionally snapshots the `model` prop:
+	// updateModel() keeps it in sync, and the GLTF error path flips it to
+	// the procedural fallback.
+	// svelte-ignore state_referenced_locally
+	let resolvedModel: 'mannequin' | 'michelle' | 'xbot' = model;
+
+	function avatarScale(): number {
+		return 1.05 * (customization.height ?? 1.0);
+	}
+
+	// Y of the hat brim: 4.2cm below the RENDERED head top of the active
+	// model. A fixed BODY value puts the xbot hat 20cm low (through the
+	// eyes) — proven by headless Box3 probe, bbox.max.y=1.8964 at h=1.0.
+	function hatBrimY(): number {
+		if (resolvedModel === 'mannequin') return BODY.headTop - 0.042;
+		return GLB_HEAD_TOP[resolvedModel] * avatarScale() - 0.042 * avatarScale();
+	}
+
+	function seatHat(): void {
+		const hat = activeShells.get('hat');
+		if (!hat || !scene) return;
+		hat.object.position.set(0, hatBrimY(), 0.012);
+		requestFrame();
+	}
+
 	function buildShell(cat: Category, piece: ClosetPiece): ShellEntry {
 		const material = new THREE.MeshStandardMaterial({
 			color: lineColor.clone(),
@@ -298,7 +331,7 @@
 				hatGroup.add(brim);
 				entry.geometries.push(brimGeo);
 
-				hatGroup.position.set(0, BODY.headTop - 0.042, 0.012);
+				hatGroup.position.set(0, hatBrimY(), 0.012);
 				hatGroup.rotation.x = 0.06;
 				entry.object = hatGroup;
 				break;
@@ -687,11 +720,14 @@
 			}
 		}
 
+		seatHat();
 		requestFrame();
 	}
 
 	function updateModel(currentModel: 'mannequin' | 'michelle' | 'xbot'): void {
 		if (!scene || !avatarGroup) return;
+		resolvedModel = currentModel;
+		seatHat();
 		if (mannequinGroup) {
 			mannequinGroup.visible = currentModel === 'mannequin';
 		}
@@ -753,6 +789,8 @@
 			(err) => {
 				console.error('Failed to load GLTF avatar:', err);
 				if (mannequinGroup) mannequinGroup.visible = true;
+				resolvedModel = 'mannequin';
+				seatHat();
 				requestFrame();
 			}
 		);
