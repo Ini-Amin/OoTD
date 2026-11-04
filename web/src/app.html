@@ -7,6 +7,27 @@
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">
-		<div style="display: contents">%sveltekit.body%</div>
+		<div style="display: contents">
+			<div id="app-splash" style="display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:system-ui,sans-serif;color:#888;">
+				<span>Loading OoTD…</span>
+			</div>
+			%sveltekit.body%
+		</div>
+		<script>
+			// Remove splash once SvelteKit renders content
+			const splashTimer = setInterval(() => {
+				const splash = document.getElementById('app-splash');
+				if (!splash) { clearInterval(splashTimer); return; }
+				const svelteContent = splash.parentElement;
+				if (svelteContent && svelteContent.children.length > 1) {
+					splash.remove();
+					clearInterval(splashTimer);
+				}
+			}, 100);
+			setTimeout(() => {
+				document.getElementById('app-splash')?.remove();
+				clearInterval(splashTimer);
+			}, 8000);
+		</script>
 	</body>
 </html>

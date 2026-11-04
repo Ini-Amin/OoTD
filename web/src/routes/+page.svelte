@@ -170,10 +170,12 @@
 	{/if}
 
 	<footer class="page-footer">
-		<p class:connected={feedSource === 'api'} class="data-status">
-			<span aria-hidden="true">●</span>
-			{feedSource === 'api' ? 'Live from Go API' : 'Local preview data'}
-		</p>
+		{#if import.meta.env.DEV}
+			<p class:connected={feedSource === 'api'} class="data-status">
+				<span aria-hidden="true">●</span>
+				{feedSource === 'api' ? 'Live from Go API' : 'Local preview data'}
+			</p>
+		{/if}
 	</footer>
 </main>
 
