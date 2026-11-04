@@ -259,7 +259,7 @@ export const mallFriends: MallFriend[] = [
 	{ id: 'salsa', name: 'Salsa', storeId: 'buttonscarves', note: 'Wedding guest look', hue: 32 }
 ];
 
-export const mallYouStart = { x: 50, y: 32 };
+export const mallYouStart = { x: 50, y: 68 };
 
 export function storeById(id: string | null | undefined): MallStore | undefined {
 	if (!id) return undefined;

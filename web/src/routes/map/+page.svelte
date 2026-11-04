@@ -2,15 +2,16 @@
 	import { onMount } from 'svelte';
 	import Mannequin3D from '$lib/Mannequin3D.svelte';
 	import CategoryIcon from '$lib/CategoryIcon.svelte';
+	import MallChat from '$lib/MallChat.svelte';
 	import { closet } from '$lib/closet.svelte';
 	import { CATEGORIES, CATEGORY_LABEL, type Category, type ClosetPiece } from '$lib/pieces';
 	import {
-		friendsInStore,
 		mallFriends,
 		mallStores,
 		mallYouStart,
 		skuToClosetPiece,
 		storeById,
+		type MallFriend,
 		type MallSku,
 		type MallStore
 	} from '$lib/mall';
@@ -18,13 +19,33 @@
 	let you = $state({ x: mallYouStart.x, y: mallYouStart.y });
 	let insideId = $state<string | null>(null);
 	let notice = $state('');
+	let friends = $state<MallFriend[]>(mallFriends.map((f) => ({ ...f })));
+	let walkingTo = $state<string | null>(null);
+	let walkTimer: ReturnType<typeof setTimeout> | undefined;
+	let wanderTimer: ReturnType<typeof setInterval> | undefined;
+
+	function friendsHere(storeId: string): MallFriend[] {
+		return friends.filter((f) => f.storeId === storeId);
+	}
 
 	onMount(() => {
 		closet.init();
+		// Friends wander the mall so the map feels alive.
+		wanderTimer = setInterval(() => {
+			friends = friends.map((f) =>
+				Math.random() < 0.45
+					? { ...f, storeId: mallStores[Math.floor(Math.random() * mallStores.length)].id }
+					: f
+			);
+		}, 7000);
+		return () => {
+			clearInterval(wanderTimer);
+			clearTimeout(walkTimer);
+		};
 	});
 
 	let inside = $derived(storeById(insideId));
-	let guests = $derived(insideId ? friendsInStore(insideId) : []);
+	let guests = $derived(insideId ? friendsHere(insideId) : []);
 
 	let worn = $derived.by(() => {
 		const map: Partial<Record<Category, ClosetPiece | undefined>> = {};
@@ -47,8 +68,23 @@
 		};
 	}
 
-	function enterStore(store: MallStore) {
+	function walkToStore(store: MallStore) {
+		clearTimeout(walkTimer);
 		you = storeCenter(store);
+		const reduced =
+			typeof window !== 'undefined' &&
+			typeof window.matchMedia === 'function' &&
+			window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+		if (reduced) {
+			enterNow(store);
+			return;
+		}
+		walkingTo = store.name;
+		walkTimer = setTimeout(() => enterNow(store), 650);
+	}
+
+	function enterNow(store: MallStore) {
+		walkingTo = null;
 		insideId = store.id;
 		notice = '';
 	}
@@ -84,8 +120,8 @@
 			<p class="kicker">Prototype</p>
 			<h1>Fashion mall</h1>
 			<p class="lede">
-				Walk the map, tap a store, and try pieces on your mannequin. Friends already in the mall
-				show up as dots — later you can style together.
+				Tap a store to walk over and try pieces on your mannequin. Friends wander
+				the mall as dots — say hi in the mall chat and style together.
 			</p>
 			<p class="disclaimer">
 				Sample store names for the prototype only. Not affiliated with these brands.
@@ -93,12 +129,16 @@
 		</header>
 
 		<div class="map-shell">
+			<div class="map-grid">
+				<div class="map-col">
 			<div class="map-stage" role="application" aria-label="Mall floor plan">
 				<svg class="floor" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-					<rect class="atrium" x="28" y="28" width="44" height="10" rx="2" />
-					<text class="atrium-label" x="50" y="34.2" text-anchor="middle">Atrium</text>
-					<rect class="path" x="46" y="38" width="8" height="32" rx="1.5" />
-					<rect class="path" x="4" y="60" width="92" height="8" rx="1.5" />
+					<rect class="atrium" x="32" y="27" width="36" height="8" rx="4" />
+					<text class="atrium-label" x="50" y="32.4" text-anchor="middle">Atrium</text>
+					<rect class="path" x="48.5" y="35" width="3" height="27" rx="1.5" />
+					<rect class="path" x="4" y="62" width="92" height="5" rx="2.5" />
+					<line class="path-line" x1="50" y1="36.5" x2="50" y2="60.5" />
+					<line class="path-line" x1="6" y1="64.5" x2="94" y2="64.5" />
 				</svg>
 
 				{#each mallStores as store (store.id)}
@@ -106,13 +146,13 @@
 						type="button"
 						class="store-pad"
 						style={`left:${store.x}%;top:${store.y}%;width:${store.w}%;height:${store.h}%;--store:${store.color}`}
-						onclick={() => enterStore(store)}
+						onclick={() => walkToStore(store)}
 					>
 						<span class="store-kind">{store.kind}</span>
 						<span class="store-name">{store.name}</span>
-						{#if friendsInStore(store.id).length}
+						{#if friendsHere(store.id).length}
 							<span class="store-friends"
-								>{friendsInStore(store.id).length} friend{friendsInStore(store.id).length > 1
+								>{friendsHere(store.id).length} friend{friendsHere(store.id).length > 1
 									? 's'
 									: ''} here</span
 							>
@@ -120,8 +160,8 @@
 					</button>
 				{/each}
 
-				{#each mallFriends as friend, i (friend.id)}
-					{@const spot = friendSpot(friend.storeId, i)}
+				{#each friends as friend (friend.id)}
+					{@const spot = friendSpot(friend.storeId, friendsHere(friend.storeId).indexOf(friend))}
 					<div
 						class="pin friend"
 						style={`left:${spot.x}%;top:${spot.y}%;--hue:${friend.hue}`}
@@ -134,6 +174,9 @@
 				<div class="pin you" style={`left:${you.x}%;top:${you.y}%`} title="You">
 					<span>You</span>
 				</div>
+				{#if walkingTo}
+					<p class="walking">Walking to {walkingTo}…</p>
+				{/if}
 			</div>
 
 			<ul class="legend">
@@ -141,6 +184,9 @@
 				<li><span class="dot friend-dot"></span> Friends exploring</li>
 				<li>Tap a store to walk in and try on</li>
 			</ul>
+				</div>
+				<MallChat />
+			</div>
 		</div>
 	{:else}
 		<header class="store-bar">
@@ -209,6 +255,9 @@
 				<p class="hint">Tried pieces stay in your closet on the Mannequin page.</p>
 			</section>
 		</div>
+		<div class="store-chat">
+			<MallChat />
+		</div>
 	{/if}
 </main>
 
@@ -261,6 +310,35 @@
 		margin-top: 1.25rem;
 	}
 
+	.map-grid {
+		display: grid;
+		grid-template-columns: minmax(0, 1.65fr) minmax(17rem, 1fr);
+		gap: 1rem;
+		align-items: start;
+	}
+
+	.map-col {
+		min-width: 0;
+	}
+
+	.walking {
+		position: absolute;
+		left: 0.9rem;
+		bottom: 0.9rem;
+		z-index: 6;
+		margin: 0;
+		padding: 0.45rem 0.8rem;
+		border-radius: 999px;
+		background: var(--t-fg);
+		color: var(--t-bg);
+		font-size: 0.78rem;
+		font-weight: 600;
+	}
+
+	.store-chat {
+		margin-top: 1rem;
+	}
+
 	.map-stage {
 		position: relative;
 		width: 100%;
@@ -297,6 +375,14 @@
 		fill: color-mix(in srgb, var(--t-surface) 70%, var(--t-bg));
 	}
 
+	.path-line {
+		fill: none;
+		stroke: var(--t-line);
+		stroke-width: 0.4;
+		stroke-dasharray: 1.5 1.2;
+		opacity: 0.8;
+	}
+
 	.store-pad {
 		position: absolute;
 		display: flex;
@@ -306,6 +392,7 @@
 		gap: 0.15rem;
 		padding: 0.55rem 0.65rem;
 		border: 1px solid color-mix(in srgb, var(--store) 35%, var(--t-line));
+		border-top: 3px solid var(--store);
 		border-radius: calc(var(--t-radius) * 0.55);
 		background: color-mix(in srgb, var(--store) 14%, var(--t-surface));
 		color: var(--t-fg);
@@ -346,7 +433,7 @@
 		transform: translate(-50%, -50%);
 		z-index: 4;
 		pointer-events: none;
-		transition: left 0.45s ease, top 0.45s ease;
+		transition: left 0.6s ease, top 0.6s ease;
 	}
 
 	.pin span {
@@ -549,6 +636,10 @@
 		}
 
 		.store-layout {
+			grid-template-columns: 1fr;
+		}
+
+		.map-grid {
 			grid-template-columns: 1fr;
 		}
 
