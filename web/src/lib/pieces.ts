@@ -41,3 +41,25 @@ export const DEFAULT_BOX: Record<Category, Pick<Piece, 'x' | 'y' | 'w' | 'h'>> =
 	bag: { x: 0.0, y: 0.4, w: 0.35, h: 0.25 },
 	accessory: { x: 0.3, y: 0.1, w: 0.4, h: 0.15 }
 };
+
+export type AvatarCustomization = {
+	height: number;
+	shoulders: number;
+	chest: number;
+	waist: number;
+	hips: number;
+	headSize: number;
+	skinTone: string;
+	animation: 'idle' | 'walk' | 'pose' | 'stand';
+};
+
+export const DEFAULT_AVATAR_CUSTOMIZATION: AvatarCustomization = {
+	height: 1.0,
+	shoulders: 1.0,
+	chest: 1.0,
+	waist: 1.0,
+	hips: 1.0,
+	headSize: 1.0,
+	skinTone: '#b98870',
+	animation: 'idle'
+};

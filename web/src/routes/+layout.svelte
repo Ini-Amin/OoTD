@@ -8,21 +8,45 @@
 	import { saved } from '$lib/saved.svelte';
 	import { closet } from '$lib/closet.svelte';
 	import { apiBase } from '$lib/outfits';
+	import StylistChat from '$lib/StylistChat.svelte';
+	import { auth } from '$lib/auth.svelte';
 
 	let { children } = $props();
 
 	let current = $derived(theme.current);
 	let pathname = $derived(page.url.pathname);
 	let isDiscover = $derived(pathname === '/');
+	let isMap = $derived(pathname.startsWith('/map'));
 	let isMannequin = $derived(pathname.startsWith('/mannequin'));
 	let isSaved = $derived(pathname.startsWith('/saved'));
 
 	let q = $state('');
+	let themesOpen = $state(false);
+	let themeWrapEl = $state<HTMLDivElement>();
 
 	onMount(() => {
+		auth.init();
 		theme.init(apiBase);
 		saved.init();
 		closet.init();
+	});
+
+	// Close the theme menu on any pointer press outside it, or on Escape.
+	$effect(() => {
+		if (!themesOpen) return;
+		const onPointerDown = (e: PointerEvent) => {
+			const t = e.target as Node | null;
+			if (t && !themeWrapEl?.contains(t)) themesOpen = false;
+		};
+		const onKeyDown = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') themesOpen = false;
+		};
+		window.addEventListener('pointerdown', onPointerDown);
+		window.addEventListener('keydown', onKeyDown);
+		return () => {
+			window.removeEventListener('pointerdown', onPointerDown);
+			window.removeEventListener('keydown', onKeyDown);
+		};
 	});
 
 	$effect(() => {
@@ -72,7 +96,29 @@
 		</form>
 
 		<div class="header-right">
-			<a class="create-link" href="/new">+ Create</a>
+			{#if auth.ready}
+				{#if auth.session && auth.profile}
+					<a
+						class="avatar-btn"
+						href={`/u/${auth.profile.username}`}
+						title={`@${auth.profile.username}`}
+						aria-label={`Profile @${auth.profile.username}`}
+					>
+						{(auth.profile.displayName?.trim() || auth.profile.username).charAt(0).toUpperCase()}
+					</a>
+					<button type="button" class="sign-out-btn" onclick={() => auth.signOut()}>
+						Sign out
+					</button>
+					<a class="create-link" href="/new">+ Create</a>
+				{:else if auth.session && !auth.profile}
+					<a class="finish-setup-link" href="/welcome">Finish setup</a>
+				{:else}
+					<a class="sign-in-link" href="/login">Sign in</a>
+					<a class="create-link" href="/new">+ Create</a>
+				{/if}
+			{:else}
+				<a class="create-link" href="/new">+ Create</a>
+			{/if}
 		</div>
 	</header>
 
@@ -88,6 +134,20 @@
 			<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 				<circle cx="12" cy="12" r="10" />
 				<polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" fill="currentColor" />
+			</svg>
+		</a>
+		<a
+			href="/map"
+			class="rail-item"
+			class:active={isMap}
+			aria-current={isMap ? 'page' : undefined}
+			aria-label="Mall map"
+			title="Mall map"
+		>
+			<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+				<polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21 3 6" />
+				<line x1="9" y1="3" x2="9" y2="18" />
+				<line x1="15" y1="6" x2="15" y2="21" />
 			</svg>
 		</a>
 		<a
@@ -123,19 +183,41 @@
 		{@render children()}
 	</div>
 
-	<aside class="theme-picker" aria-label="Choose a theme">
-		{#each theme.themes as t}
-			<button
-				type="button"
-				class:selected={t.slug === current.slug}
-				aria-pressed={t.slug === current.slug}
-				aria-label={`${t.name} theme`}
-				title={t.name}
-				style={`--sw-bg:${t.bg};--sw-accent:${t.accent}`}
-				onclick={() => theme.pick(t.slug)}
-			></button>
-		{/each}
-	</aside>
+	<div class="theme-picker-wrap" bind:this={themeWrapEl}>
+		<button
+			type="button"
+			class="theme-toggle"
+			aria-expanded={themesOpen}
+			aria-label={`Theme: ${current.name}. Change theme`}
+			onclick={() => (themesOpen = !themesOpen)}
+			style={`--sw-bg:${current.bg};--sw-accent:${current.accent}`}
+		>
+			<span class="theme-dot" aria-hidden="true"></span>
+			<span class="theme-name">{current.name}</span>
+		</button>
+		{#if themesOpen}
+			<div class="theme-menu" role="group" aria-label="Choose a theme">
+				{#each theme.themes as t}
+					<button
+						type="button"
+						class:selected={t.slug === current.slug}
+						aria-pressed={t.slug === current.slug}
+						aria-label={`${t.name} theme`}
+						title={t.name}
+						style={`--sw-bg:${t.bg};--sw-accent:${t.accent}`}
+						onclick={() => {
+							theme.pick(t.slug);
+							themesOpen = false;
+						}}
+					>
+						<span class="theme-menu-dot" aria-hidden="true"></span>
+						<span class="theme-menu-name">{t.name}</span>
+					</button>
+				{/each}
+			</div>
+		{/if}
+	</div>
+	<StylistChat />
 </div>
 
 <style>
@@ -198,6 +280,74 @@
 
 	.header-right {
 		flex: 0 0 auto;
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+	}
+
+	.sign-in-link {
+		color: var(--t-muted);
+		font-size: 0.85rem;
+		font-weight: 450;
+		text-decoration: none;
+		padding: 0.4rem 0.65rem;
+		border-radius: 999px;
+		transition: color 0.15s ease;
+	}
+
+	.sign-in-link:hover {
+		color: var(--t-fg);
+	}
+
+	.finish-setup-link {
+		color: var(--t-bg);
+		background: var(--t-accent);
+		font-size: 0.85rem;
+		font-weight: 500;
+		text-decoration: none;
+		padding: 0.4rem 0.85rem;
+		border-radius: 999px;
+		transition: opacity 0.15s ease;
+	}
+
+	.finish-setup-link:hover {
+		opacity: 0.85;
+	}
+
+	.avatar-btn {
+		width: 2rem;
+		height: 2rem;
+		border-radius: 50%;
+		background: var(--t-tint);
+		border: 1px solid var(--t-line);
+		color: var(--t-fg);
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 0.85rem;
+		font-weight: 700;
+		text-decoration: none;
+		text-transform: uppercase;
+		transition: border-color 0.15s ease;
+	}
+
+	.avatar-btn:hover {
+		border-color: var(--t-fg);
+	}
+
+	.sign-out-btn {
+		background: transparent;
+		border: none;
+		color: var(--t-muted);
+		font-family: inherit;
+		font-size: 0.82rem;
+		cursor: pointer;
+		padding: 0.25rem 0.4rem;
+		transition: color 0.15s ease;
+	}
+
+	.sign-out-btn:hover {
+		color: var(--t-fg);
 	}
 
 	.wordmark {
@@ -319,39 +469,94 @@
 		padding-right: 5rem;
 	}
 
-	.theme-picker {
+	.theme-picker-wrap {
 		position: fixed;
 		left: 1rem;
 		bottom: 1rem;
-		display: flex;
-		gap: 0.5rem;
-		padding: 0.45rem 0.65rem;
-		border: 1px solid var(--t-line);
-		border-radius: 999px;
-		background: var(--t-surface);
-		box-shadow: 0 4px 16px color-mix(in srgb, var(--t-fg) 8%, transparent);
 		z-index: 60;
 	}
 
-	.theme-picker button {
-		width: 1.35rem;
-		height: 1.35rem;
-		border: 2px solid var(--sw-accent);
-		border-radius: 50%;
-		background: linear-gradient(135deg, var(--sw-bg) 50%, var(--sw-accent) 50%);
-		padding: 0;
+	.theme-toggle {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		padding: 0.4rem 0.7rem;
+		border: 1px solid var(--t-line);
+		border-radius: 999px;
+		background: var(--t-surface);
+		color: var(--t-fg);
+		font-family: var(--t-font);
+		font-size: 0.78rem;
+		cursor: pointer;
+		box-shadow: 0 4px 16px color-mix(in srgb, var(--t-fg) 8%, transparent);
 	}
 
-	.theme-picker button.selected {
-		outline: 2px solid var(--t-fg);
-		outline-offset: 2px;
+	.theme-dot {
+		width: 0.85rem;
+		height: 0.85rem;
+		border-radius: 50%;
+		border: 1px solid var(--sw-accent);
+		background: linear-gradient(135deg, var(--sw-bg) 50%, var(--sw-accent) 50%);
+	}
+
+	.theme-menu {
+		position: absolute;
+		left: 0;
+		bottom: calc(100% + 0.5rem);
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+		min-width: 11rem;
+		padding: 0.3rem;
+		border: 1px solid var(--t-line);
+		border-radius: 0.7rem;
+		background: var(--t-surface);
+		box-shadow: 0 8px 28px color-mix(in srgb, var(--t-fg) 14%, transparent);
+	}
+
+	.theme-menu button {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		width: 100%;
+		padding: 0.35rem 0.5rem;
+		border: 0;
+		border-radius: 0.45rem;
+		background: none;
+		color: var(--t-fg);
+		font-family: var(--t-font);
+		font-size: 0.78rem;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.theme-menu button:hover {
+		background: var(--t-tint);
+	}
+
+	.theme-menu button.selected {
+		font-weight: 600;
+	}
+
+	.theme-menu-dot {
+		width: 0.85rem;
+		height: 0.85rem;
+		flex: none;
+		border-radius: 50%;
+		border: 1px solid var(--sw-accent);
+		background: linear-gradient(135deg, var(--sw-bg) 50%, var(--sw-accent) 50%);
 	}
 
 	.rail-item:focus-visible,
 	.create-link:focus-visible,
+	.sign-in-link:focus-visible,
+	.finish-setup-link:focus-visible,
+	.avatar-btn:focus-visible,
+	.sign-out-btn:focus-visible,
 	.search-submit:focus-visible,
 	.wordmark:focus-visible,
-	.theme-picker button:focus-visible {
+	.theme-toggle:focus-visible,
+	.theme-menu button:focus-visible {
 		outline: 2px solid var(--t-accent);
 		outline-offset: 2px;
 	}
@@ -399,16 +604,14 @@
 			border-top: 1px solid var(--t-line);
 		}
 
-		.theme-picker {
+		.theme-picker-wrap {
 			left: 0.75rem;
 			bottom: calc(4.75rem + env(safe-area-inset-bottom, 0px));
-			padding: 0.35rem 0.5rem;
-			gap: 0.35rem;
 		}
 
-		.theme-picker button {
-			width: 1.15rem;
-			height: 1.15rem;
+		.theme-toggle {
+			padding: 0.35rem 0.55rem;
+			font-size: 0.72rem;
 		}
 	}
 
@@ -417,6 +620,10 @@
 		.search-form,
 		.search-submit,
 		.create-link,
+		.sign-in-link,
+		.finish-setup-link,
+		.avatar-btn,
+		.sign-out-btn,
 		.rail-item {
 			transition: none !important;
 		}

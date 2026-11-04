@@ -8,11 +8,49 @@
 		CATEGORIES,
 		CATEGORY_LABEL,
 		type Category,
-		type ClosetPiece
+		type ClosetPiece,
+		type AvatarCustomization,
+		DEFAULT_AVATAR_CUSTOMIZATION
 	} from '$lib/pieces';
 
 	let dialogEl = $state<HTMLDialogElement>();
 	let isDialogOpen = $state(false);
+	let custom = $state<AvatarCustomization>({ ...DEFAULT_AVATAR_CUSTOMIZATION });
+	let showStudio = $state(true);
+
+	const skinTones = [
+		{ name: 'Porcelain', color: '#f5d0b5' },
+		{ name: 'Warm Honey', color: '#e2b38f' },
+		{ name: 'Golden Tan', color: '#c58c65' },
+		{ name: 'Chestnut', color: '#8d5536' },
+		{ name: 'Espresso', color: '#432616' },
+		{ name: 'Titanium', color: '#9aa0a6' },
+		{ name: 'Rose Quartz', color: '#c9928f' }
+	];
+
+	type PoseId = AvatarCustomization['animation'];
+
+	const POSES: { id: PoseId; label: string }[] = [
+		{ id: 'idle', label: 'Idle' },
+		{ id: 'walk', label: 'Walk' },
+		{ id: 'pose', label: 'Pose' },
+		{ id: 'stand', label: 'Stand' }
+	];
+
+	type SliderKey = 'height' | 'shoulders' | 'chest' | 'waist' | 'hips' | 'headSize';
+
+	const SLIDERS: { key: SliderKey; label: string; min: number; max: number; step: number }[] = [
+		{ key: 'height', label: 'Height', min: 0.8, max: 1.2, step: 0.01 },
+		{ key: 'shoulders', label: 'Shoulders', min: 0.8, max: 1.3, step: 0.02 },
+		{ key: 'chest', label: 'Chest', min: 0.8, max: 1.35, step: 0.02 },
+		{ key: 'waist', label: 'Waist', min: 0.75, max: 1.35, step: 0.02 },
+		{ key: 'hips', label: 'Hips', min: 0.8, max: 1.35, step: 0.02 },
+		{ key: 'headSize', label: 'Head', min: 0.85, max: 1.15, step: 0.02 }
+	];
+
+	function resetCustomization() {
+		custom = { ...DEFAULT_AVATAR_CUSTOMIZATION };
+	}
 
 	onMount(() => {
 		closet.init();
@@ -120,26 +158,120 @@
 <main class="mannequin-page">
 	<section class="mannequin-col" aria-label="3D Mannequin">
 		<div class="mannequin-viewport">
-			<!-- Height comes from a CSS variable so the page can shrink the
-			     viewport on phones without the component knowing about
-			     breakpoints. At 72vh on a 390x844 screen the model ran under the
-			     fixed theme picker and the bottom nav. -->
-			<Mannequin3D {worn} height="var(--mannequin-h, 72vh)" />
+			<Mannequin3D {worn} model="xbot" customization={custom} height="100%" />
 			{#if nothingWorn && !isClosetEmpty}
 				<p class="viewport-hint">Tap a piece on the right to dress the mannequin</p>
 			{/if}
-		</div>
-		{#if !nothingWorn}
-			<div class="mannequin-underbar">
+
+			{#if !nothingWorn}
 				<button
 					type="button"
-					class="clear-mannequin-button"
+					class="clear-look-btn"
 					onclick={clearMannequin}
+					title="Remove all clothing pieces from mannequin"
 				>
-					Clear mannequin
+					Clear look
 				</button>
-			</div>
-		{/if}
+			{/if}
+
+			<!-- Floating Docked Avatar Studio (no page scroll needed) -->
+			<section
+				class="studio"
+				aria-label="Avatar body studio"
+				onpointerdown={(e) => e.stopPropagation()}
+			>
+				<div class="studio-bar">
+					<button
+						type="button"
+						class="studio-toggle"
+						aria-expanded={showStudio}
+						onclick={() => (showStudio = !showStudio)}
+					>
+						<span class="studio-title">Avatar Studio</span>
+						<svg
+							class="studio-chevron"
+							class:open={showStudio}
+							viewBox="0 0 12 12"
+							width="10"
+							height="10"
+							aria-hidden="true"
+						>
+							<path
+								d="M2.5 4.5 6 8 9.5 4.5"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.6"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+							/>
+						</svg>
+					</button>
+					{#if showStudio}
+						<button type="button" class="studio-reset" onclick={resetCustomization}>
+							Reset
+						</button>
+					{/if}
+				</div>
+
+				{#if showStudio}
+					<div class="studio-panel">
+						<div class="field">
+							<span class="field-label">Pose</span>
+							<div class="segmented" role="group" aria-label="Pose">
+								{#each POSES as p}
+									<button
+										type="button"
+										class="segment"
+										class:active={custom.animation === p.id}
+										aria-pressed={custom.animation === p.id}
+										onclick={() => (custom.animation = p.id)}
+									>
+										{p.label}
+									</button>
+								{/each}
+							</div>
+						</div>
+
+						<div class="field">
+							<span class="field-label">Skin Tone</span>
+							<div class="swatches" role="group" aria-label="Skin tone">
+								{#each skinTones as tone}
+									<button
+										type="button"
+										class="swatch"
+										class:active={custom.skinTone === tone.color}
+										style:background-color={tone.color}
+										title={tone.name}
+										aria-label={tone.name}
+										aria-pressed={custom.skinTone === tone.color}
+										onclick={() => (custom.skinTone = tone.color)}
+									></button>
+								{/each}
+							</div>
+						</div>
+
+						<div class="fields">
+							{#each SLIDERS as s}
+								<label class="slider">
+									<span class="slider-head">
+										<span class="slider-label">{s.label}</span>
+										<span class="slider-value">{Math.round(custom[s.key] * 100)}%</span>
+									</span>
+									<input
+										type="range"
+										min={s.min}
+										max={s.max}
+										step={s.step}
+										bind:value={custom[s.key]}
+										aria-label={s.label}
+									/>
+								</label>
+							{/each}
+						</div>
+					</div>
+				{/if}
+			</section>
+		</div>
 	</section>
 
 	<section class="closet-col" aria-label="Your closet">
@@ -274,10 +406,10 @@
 
 <style>
 	.mannequin-page {
-		--mannequin-h: 72vh;
+		--mannequin-h: min(760px, calc(100vh - 7.5rem));
 		width: min(1380px, calc(100% - 2.5rem));
 		margin: 0 auto;
-		padding: 2rem 0 4rem;
+		padding: 1.25rem 0 2rem;
 		display: grid;
 		/* The closet is capped at 30rem (see .closet-col), so a 1.1fr second
 		   column left ~200px of dead space at 1440px and pushed the two halves
@@ -324,6 +456,9 @@
 
 	.mannequin-viewport {
 		width: 100%;
+		height: var(--mannequin-h);
+		min-height: 520px;
+		max-height: 760px;
 		border: 1px solid var(--t-line);
 		border-radius: var(--t-radius);
 		background: var(--t-tint);
@@ -350,27 +485,29 @@
 		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 	}
 
-	.mannequin-underbar {
-		display: flex;
-		justify-content: center;
-		padding: 0.25rem 0;
-	}
-
-	.clear-mannequin-button {
-		background: transparent;
-		border: 0;
+	.clear-look-btn {
+		position: absolute;
+		top: 0.85rem;
+		right: 0.85rem;
+		z-index: 10;
+		padding: 0.32rem 0.75rem;
+		border: 1px solid var(--t-line);
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--t-surface) 90%, transparent);
+		backdrop-filter: blur(8px);
+		-webkit-backdrop-filter: blur(8px);
 		color: var(--t-muted);
 		font-family: var(--t-font);
-		font-size: 0.82rem;
+		font-size: 0.75rem;
+		font-weight: 500;
 		cursor: pointer;
-		padding: 0.35rem 0.75rem;
-		border-radius: var(--t-radius);
-		transition: color 0.15s ease, background-color 0.15s ease;
+		transition: color 0.12s ease, border-color 0.12s ease, background-color 0.12s ease;
 	}
 
-	.clear-mannequin-button:hover {
+	.clear-look-btn:hover {
 		color: var(--t-fg);
-		background-color: var(--t-tint);
+		border-color: var(--t-fg);
+		background: var(--t-surface);
 	}
 
 	.closet-col {
@@ -681,11 +818,239 @@
 		backdrop-filter: blur(2px);
 	}
 
+	/* Floating Docked Avatar Studio (integrated inside viewport, zero page scroll) */
+	.studio {
+		position: absolute;
+		bottom: 0.65rem;
+		left: 0.65rem;
+		right: 0.65rem;
+		z-index: 15;
+		border: 1px solid var(--t-line);
+		border-radius: calc(var(--t-radius) - 0.25rem);
+		background: color-mix(in srgb, var(--t-surface) 92%, transparent);
+		backdrop-filter: blur(16px);
+		-webkit-backdrop-filter: blur(16px);
+		box-shadow: 0 8px 32px color-mix(in srgb, var(--t-fg) 10%, transparent);
+		overflow: hidden;
+	}
+
+	.studio-bar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+		padding: 0.35rem 0.5rem 0.35rem 0.85rem;
+		background: color-mix(in srgb, var(--t-tint) 60%, transparent);
+	}
+
+	.studio-toggle {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		flex: 1;
+		min-width: 0;
+		padding: 0.25rem 0;
+		border: 0;
+		background: none;
+		color: var(--t-fg);
+		font-family: var(--t-font);
+		font-size: 0.8rem;
+		font-weight: 600;
+		letter-spacing: 0.02em;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.studio-chevron {
+		flex: none;
+		color: var(--t-muted);
+		transition: transform 0.15s ease;
+	}
+
+	.studio-chevron.open {
+		transform: rotate(180deg);
+	}
+
+	.studio-reset {
+		flex: none;
+		padding: 0.2rem 0.6rem;
+		border: 1px solid var(--t-line);
+		border-radius: 999px;
+		background: none;
+		font-family: var(--t-font);
+		font-size: 0.7rem;
+		color: var(--t-muted);
+		cursor: pointer;
+		transition: color 0.12s ease, border-color 0.12s ease;
+	}
+
+	.studio-reset:hover {
+		color: var(--t-fg);
+		border-color: var(--t-fg);
+	}
+
+	.studio-panel {
+		display: flex;
+		flex-direction: column;
+		gap: 0.55rem;
+		padding: 0.6rem 0.85rem 0.75rem;
+		max-height: 240px;
+		overflow-y: auto;
+	}
+
+	.field {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+	}
+
+	.field-label {
+		font-size: 0.66rem;
+		font-weight: 600;
+		letter-spacing: 0.09em;
+		text-transform: uppercase;
+		color: var(--t-muted);
+	}
+
+	.segmented {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: 2px;
+		padding: 2px;
+		border-radius: 999px;
+		background: var(--t-tint);
+	}
+
+	.segment {
+		padding: 0.32rem 0.3rem;
+		border: 0;
+		border-radius: 999px;
+		background: none;
+		font-family: var(--t-font);
+		font-size: 0.74rem;
+		font-weight: 500;
+		color: var(--t-muted);
+		white-space: nowrap;
+		cursor: pointer;
+		transition: background-color 0.12s ease, color 0.12s ease;
+	}
+
+	.segment:hover {
+		color: var(--t-fg);
+	}
+
+	.segment.active {
+		background: var(--t-surface);
+		color: var(--t-fg);
+		font-weight: 600;
+		box-shadow: 0 1px 3px color-mix(in srgb, var(--t-fg) 14%, transparent);
+	}
+
+	.swatches {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+	}
+
+	.swatch {
+		width: 1.45rem;
+		height: 1.45rem;
+		padding: 0;
+		border: 1px solid color-mix(in srgb, var(--t-fg) 16%, transparent);
+		border-radius: 50%;
+		cursor: pointer;
+		transition: transform 0.12s ease, box-shadow 0.12s ease;
+	}
+
+	.swatch:hover {
+		transform: scale(1.12);
+	}
+
+	.swatch.active {
+		box-shadow: 0 0 0 2px var(--t-surface), 0 0 0 3px var(--t-fg);
+	}
+
+	.fields {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.5rem 1.1rem;
+	}
+
+	.slider {
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+	}
+
+	.slider-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 0.4rem;
+	}
+
+	.slider-label {
+		font-size: 0.72rem;
+		color: var(--t-muted);
+	}
+
+	.slider-value {
+		font-size: 0.68rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--t-muted);
+	}
+
+	.slider input[type='range'] {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 100%;
+		height: 0.9rem;
+		margin: 0;
+		background: transparent;
+		cursor: pointer;
+	}
+
+	.slider input[type='range']::-webkit-slider-runnable-track {
+		height: 3px;
+		border-radius: 2px;
+		background: var(--t-line);
+	}
+
+	.slider input[type='range']::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 0.75rem;
+		height: 0.75rem;
+		margin-top: -0.22rem;
+		border: 0;
+		border-radius: 50%;
+		background: var(--t-fg);
+	}
+
+	.slider input[type='range']::-moz-range-track {
+		height: 3px;
+		border-radius: 2px;
+		background: var(--t-line);
+	}
+
+	.slider input[type='range']::-moz-range-thumb {
+		width: 0.75rem;
+		height: 0.75rem;
+		border: 0;
+		border-radius: 50%;
+		background: var(--t-fg);
+	}
+
+	.slider input[type='range']:focus-visible {
+		outline: 2px solid var(--t-accent);
+		outline-offset: 2px;
+		border-radius: 2px;
+	}
 	@media (prefers-reduced-motion: reduce) {
 		.thumbnail-wrapper,
 		.thumbnail-btn,
 		.remove-btn,
-		.clear-mannequin-button,
+		.clear-look-btn,
 		.btn-action {
 			transition: none;
 		}

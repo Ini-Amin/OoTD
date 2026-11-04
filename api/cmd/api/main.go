@@ -18,6 +18,11 @@ func main() {
 		log.Fatal("DATABASE_URL is required, e.g. postgres://ootd@/ootd?host=/tmp&port=5433")
 	}
 
+	supabaseURL := os.Getenv("SUPABASE_URL")
+	if supabaseURL == "" {
+		log.Fatal("SUPABASE_URL is required")
+	}
+
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dbURL)
 	if err != nil {
@@ -29,6 +34,10 @@ func main() {
 		log.Fatalf("migrate: %v", err)
 	}
 
+	auth, err := httpapi.NewAuthenticator(supabaseURL)
+	if err != nil {
+		log.Fatalf("authenticator: %v", err)
+	}
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -40,7 +49,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:    ":" + port,
-		Handler: httpapi.NewServer(pool, origin),
+		Handler: httpapi.NewServer(pool, auth, origin),
 	}
 
 	log.Printf("OoTD API listening on http://localhost:%s", port)

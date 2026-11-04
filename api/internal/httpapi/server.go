@@ -57,11 +57,6 @@ type Theme struct {
 	Radius  string `json:"radius"`
 }
 
-type User struct {
-	Username    string `json:"username"`
-	DisplayName string `json:"displayName"`
-}
-
 type UserProfile struct {
 	Username    string  `json:"username"`
 	DisplayName string  `json:"displayName"`
@@ -70,25 +65,30 @@ type UserProfile struct {
 }
 
 type server struct {
-	db *pgxpool.Pool
-	ai *ai.Client
+	db        *pgxpool.Pool
+	ai        *ai.Client
+	auth      *Authenticator
+	aiLimiter *limiter
+	storage   *storageClient
 }
 
-func NewServer(db *pgxpool.Pool, allowedOrigin string) http.Handler {
-	s := &server{db: db, ai: ai.NewClientFromEnv()}
+func NewServer(db *pgxpool.Pool, auth *Authenticator, allowedOrigin string) http.Handler {
+	s := &server{db: db, ai: ai.NewClientFromEnv(), auth: auth, aiLimiter: newLimiter(), storage: NewStorageFromEnv()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("GET /v1/tags", s.listTags)
 	mux.HandleFunc("GET /v1/outfits", s.listOutfits)
 	mux.HandleFunc("GET /v1/outfits/{id}", s.getOutfit)
-	mux.HandleFunc("POST /v1/outfits", s.createOutfit)
-	mux.HandleFunc("GET /v1/users", s.listUsers)
+	mux.HandleFunc("POST /v1/outfits", s.auth.requireAuth(s.createOutfit))
+	mux.HandleFunc("GET /v1/me", s.auth.requireAuth(s.getMe))
+	mux.HandleFunc("POST /v1/me", s.auth.requireAuth(s.postMe))
 	mux.HandleFunc("GET /v1/users/{username}", s.getUser)
 	mux.HandleFunc("GET /v1/themes", s.listThemes)
 	mux.HandleFunc("GET /v1/search", s.searchOutfits)
-	mux.HandleFunc("POST /v1/requests", s.createCraftRequest)
-	mux.HandleFunc("POST /v1/analyze", s.analyzeOutfit)
-	mux.HandleFunc("POST /v1/stylist", s.stylistChat)
+	mux.HandleFunc("POST /v1/requests", s.auth.requireAuth(s.createCraftRequest))
+	mux.HandleFunc("POST /v1/analyze", s.auth.requireAuth(s.analyzeOutfit))
+	mux.HandleFunc("POST /v1/stylist", s.auth.requireAuth(s.stylistChat))
+	mux.HandleFunc("POST /v1/uploads", s.auth.requireAuth(s.uploadImage))
 	return withCORS(mux, allowedOrigin)
 }
 
@@ -298,18 +298,7 @@ func (s *server) getOutfit(w http.ResponseWriter, r *http.Request) {
 func (s *server) getUser(w http.ResponseWriter, r *http.Request) {
 	username := r.PathValue("username")
 
-	var u UserProfile
-	var slug, name, bg, surface, fg, accent, font, radius *string
-	err := s.db.QueryRow(r.Context(), `
-		SELECT u.username, u.display_name, u.bio,
-		       t.slug, t.name, t.bg, t.surface, t.fg, t.accent, t.font, t.radius
-		FROM users u
-		LEFT JOIN themes t ON t.id = u.theme_id
-		WHERE u.username = $1
-	`, username).Scan(
-		&u.Username, &u.DisplayName, &u.Bio,
-		&slug, &name, &bg, &surface, &fg, &accent, &font, &radius,
-	)
+	u, err := scanUserProfile(s.db.QueryRow(r.Context(), userProfileSelectSQL+" WHERE u.username = $1", username))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "unknown user")
@@ -317,18 +306,6 @@ func (s *server) getUser(w http.ResponseWriter, r *http.Request) {
 		}
 		serverError(w, err)
 		return
-	}
-	if slug != nil {
-		u.Theme = &Theme{
-			Slug:    *slug,
-			Name:    *name,
-			Bg:      *bg,
-			Surface: *surface,
-			Fg:      *fg,
-			Accent:  *accent,
-			Font:    *font,
-			Radius:  *radius,
-		}
 	}
 
 	rows, err := s.db.Query(r.Context(), listUserOutfitsSQL, username)
@@ -350,8 +327,7 @@ func (s *server) getUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *server) createOutfit(w http.ResponseWriter, r *http.Request) {
-	// ponytail: username is trusted from request body; skipped: session/auth verification, add when auth phase lands.
+func (s *server) createOutfit(w http.ResponseWriter, r *http.Request, claims *authClaims) {
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -374,16 +350,15 @@ func (s *server) createOutfit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var authorID string
-	err = s.db.QueryRow(r.Context(), `SELECT id::text FROM users WHERE username = $1`, cleaned.Username).Scan(&authorID)
+	err = s.db.QueryRow(r.Context(), `SELECT id::text FROM users WHERE auth_id = $1::uuid`, claims.Sub).Scan(&authorID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "unknown user")
+			writeError(w, http.StatusNotFound, "create your profile first")
 			return
 		}
 		serverError(w, err)
 		return
 	}
-
 	tx, err := s.db.Begin(r.Context())
 	if err != nil {
 		serverError(w, err)
@@ -432,6 +407,17 @@ func (s *server) createOutfit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	for i, p := range cleaned.Pieces {
+		_, err = tx.Exec(r.Context(), `
+			INSERT INTO outfit_pieces (outfit_id, category, label, x, y, w, h, sort_order)
+			VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8)
+		`, outfitID, p.Category, p.Label, p.Box.X, p.Box.Y, p.Box.W, p.Box.H, i)
+		if err != nil {
+			serverError(w, err)
+			return
+		}
+	}
+
 	out, err := scanOutfit(tx.QueryRow(r.Context(), createOutfitFetchSQL, outfitID))
 	if err != nil {
 		serverError(w, err)
@@ -445,30 +431,6 @@ func (s *server) createOutfit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]Outfit{"outfit": out})
 }
 
-func (s *server) listUsers(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.Query(r.Context(), `SELECT username, display_name FROM users ORDER BY created_at`)
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	defer rows.Close()
-
-	users := []User{}
-	for rows.Next() {
-		var u User
-		if err := rows.Scan(&u.Username, &u.DisplayName); err != nil {
-			serverError(w, err)
-			return
-		}
-		users = append(users, u)
-	}
-	if err := rows.Err(); err != nil {
-		serverError(w, err)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string][]User{"users": users})
-}
 
 func (s *server) listThemes(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.Query(r.Context(), `SELECT slug, name, bg, surface, fg, accent, font, radius FROM themes ORDER BY sort_order`)
@@ -499,7 +461,7 @@ func withCORS(next http.Handler, allowedOrigin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

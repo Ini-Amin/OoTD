@@ -1,13 +1,10 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
+	import { apiBase } from '$lib/outfits';
+	import { auth, authHeaders } from '$lib/auth.svelte';
 
-	type User = {
-		username: string;
-		displayName: string;
-	};
-
-	const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:8080';
 	const accentColors = [
 		'#e8b86d',
 		'#8da8c7',
@@ -16,11 +13,6 @@
 		'#7b4dff',
 		'#ff4d00'
 	];
-
-	let users = $state<User[]>([]);
-	let usersError = $state<string | null>(null);
-
-	let username = $state('');
 	let title = $state('');
 	let caption = $state('');
 	let tagsInput = $state('');
@@ -34,16 +26,20 @@
 	let fileError = $state<string | null>(null);
 	let dragOver = $state(false);
 	let fileInput = $state<HTMLInputElement | null>(null);
+	let uploading = $state(false);
+	let uploadedUrl = $state('');
 	// Local file preview wins; falls back to the URL preview.
 	let effectivePreviewUrl = $derived(filePreviewUrl || debouncedPreviewUrl);
-	let submitting = $state(false);
-	let errorMessage = $state<string | null>(null);
 
 	// Magic Tag (Meta AI) state
 	let aiAvailable = $state(false);
 	let magicLoading = $state(false);
 	let magicError = $state<string | null>(null);
-	let magicPieces = $state<Array<{ category: string; label: string }>>([]);
+	let magicPieces = $state<
+		Array<{ category: string; label: string; box: { x: number; y: number; w: number; h: number } }>
+	>([]);
+	let submitting = $state(false);
+	let errorMessage = $state<string | null>(null);
 
 	$effect(() => {
 		const raw = imageUrl.trim();
@@ -82,12 +78,56 @@
 		if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
 		file = f;
 		filePreviewUrl = URL.createObjectURL(f);
+		uploadFile(f);
+	}
+
+	async function uploadFile(f: File) {
+		uploading = true;
+		try {
+			const form = new FormData();
+			form.append('file', f);
+			const res = await fetch(`${apiBase}/v1/uploads`, {
+				method: 'POST',
+				headers: { ...authHeaders() },
+				body: form
+			});
+			if (file !== f) return; // user picked another file meanwhile
+			if (res.status === 503) {
+				fileError = 'Uploads are not configured on the server.';
+				return;
+			}
+			if (res.status === 401) {
+				fileError = 'Your session expired. Sign in again.';
+				return;
+			}
+			if (res.status === 429) {
+				fileError = 'Too many uploads. Try again in a bit.';
+				return;
+			}
+			if (!res.ok) {
+				const data = (await res.json().catch(() => null)) as { error?: string } | null;
+				fileError = data?.error ?? `Upload failed (${res.status}).`;
+				return;
+			}
+			const data = (await res.json()) as { imageUrl?: string };
+			if (data.imageUrl) {
+				uploadedUrl = data.imageUrl;
+				imageUrl = data.imageUrl;
+			}
+		} catch {
+			if (file === f) fileError = 'Upload failed. Check your connection and try again.';
+		} finally {
+			if (file === f) uploading = false;
+		}
 	}
 
 	function clearFile() {
 		if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
 		file = null;
 		filePreviewUrl = '';
+		uploading = false;
+		if (imageUrl === uploadedUrl) imageUrl = '';
+		uploadedUrl = '';
 		if (fileInput) fileInput.value = '';
 	}
 
@@ -96,33 +136,19 @@
 	});
 
 	onMount(async () => {
-		try {
-			const res = await fetch(`${apiBase}/v1/users`);
-			if (!res.ok) throw new Error('API unreachable');
-			const data = (await res.json()) as { users: User[] };
-			if (!data.users || data.users.length === 0) {
-				throw new Error('No users returned');
-			}
-			users = data.users;
-			username = users[0].username;
-		} catch {
-			// Internal flag only — never shown to users; controls stay
-			// gracefully disabled instead.
-			usersError = 'unreachable';
-			if (import.meta.env.DEV) {
-				console.warn('[new] API unreachable — publish controls disabled');
-			}
-		}
+		auth.init();
 
-		// Probe: 400 on empty body means AI is configured; 503 means it is not.
-		// The probe never reaches the model (validation fails first).
+		// Probe: 400 on empty body means AI is configured; anything else
+		// (503, 401, network error) hides the Magic Tag UI. The probe never
+		// reaches the model (validation fails first) and never counts
+		// against the rate limit.
 		try {
 			const probe = await fetch(`${apiBase}/v1/analyze`, {
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+				headers: { 'Content-Type': 'application/json', ...authHeaders() },
 				body: JSON.stringify({ image_url: '' })
 			});
-			aiAvailable = probe.status !== 503;
+			aiAvailable = probe.status === 400;
 		} catch {
 			aiAvailable = false;
 		}
@@ -136,12 +162,20 @@
 		try {
 			const res = await fetch(`${apiBase}/v1/analyze`, {
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+				headers: { 'Content-Type': 'application/json', ...authHeaders() },
 				body: JSON.stringify({ image_url: raw })
 			});
 			if (res.status === 503) {
 				aiAvailable = false;
 				magicError = 'AI is not configured on the server.';
+				return;
+			}
+			if (res.status === 401) {
+				magicError = 'Your session expired. Sign in again.';
+				return;
+			}
+			if (res.status === 429) {
+				magicError = 'Too many requests. Try again in a bit.';
 				return;
 			}
 			if (res.status === 422) {
@@ -154,7 +188,11 @@
 				caption?: string;
 				style_tags?: string[];
 				occasion_tags?: string[];
-				pieces?: Array<{ category: string; label: string }>;
+				pieces?: Array<{
+					category: string;
+					label: string;
+					box?: { x: number; y: number; w: number; h: number };
+				}>;
 			};
 			if (data.title) title = data.title;
 			if (data.caption) caption = data.caption;
@@ -162,7 +200,8 @@
 			if (tags.length > 0) tagsInput = tags.join(', ');
 			magicPieces = (data.pieces ?? []).map((p) => ({
 				category: p.category,
-				label: p.label
+				label: p.label,
+				box: p.box ?? { x: 0, y: 0, w: 0, h: 0 }
 			}));
 		} catch {
 			magicError = 'Magic Tag failed. Check the photo URL and try again.';
@@ -173,7 +212,7 @@
 
 	async function handleSubmit(event: SubmitEvent) {
 		event.preventDefault();
-		if (submitting || usersError || users.length === 0) return;
+		if (submitting || uploading || !auth.session || !auth.profile) return;
 
 		submitting = true;
 		errorMessage = null;
@@ -183,20 +222,19 @@
 			.map((t) => t.trim())
 			.filter((t) => t.length > 0);
 
-		// ponytail: username is trusted until auth phase replaces this with session auth
 		const payload: {
-			username: string;
 			title: string;
 			caption: string;
 			tags: string[];
 			accent: string;
 			imageUrl?: string;
+			pieces: typeof magicPieces;
 		} = {
-			username,
 			title: title.trim(),
 			caption: caption.trim(),
 			tags,
-			accent: accent.toLowerCase()
+			accent: accent.toLowerCase(),
+			pieces: magicPieces
 		};
 
 		const trimmedImage = imageUrl.trim();
@@ -207,7 +245,7 @@
 		try {
 			const res = await fetch(`${apiBase}/v1/outfits`, {
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+				headers: { 'content-type': 'application/json', ...authHeaders() },
 				body: JSON.stringify(payload)
 			});
 
@@ -216,7 +254,9 @@
 				return;
 			}
 
-			if (res.status === 400 || res.status === 404) {
+			if (res.status === 401) {
+				errorMessage = 'Your session expired. Sign in again.';
+			} else if (res.status === 400 || res.status === 404) {
 				const data = (await res.json().catch(() => ({}))) as { error?: string };
 				errorMessage = data.error ?? 'Validation failed.';
 			} else {
@@ -240,211 +280,207 @@
 		<p class="eyebrow">Share your style</p>
 		<h1>Create an OoTD</h1>
 
-		{#if import.meta.env.DEV && usersError}
-			<p class="dev-note">dev: API unreachable — publish &amp; AI controls disabled</p>
-		{/if}
-
 		{#if errorMessage}
 			<p class="error-region" role="alert">{errorMessage}</p>
 		{/if}
 
-		<form onsubmit={handleSubmit}>
-			<div class="field">
-				<span class="field-label" id="photo-label">
-					Photo <span class="hint">(optional)</span>
-				</span>
-				<div
-					class="dropzone"
-					class:dragging={dragOver}
-					role="button"
-					tabindex="0"
-					aria-labelledby="photo-label"
-					onclick={() => fileInput?.click()}
-					onkeydown={(e) => {
-						if (e.key === 'Enter' || e.key === ' ') {
-							e.preventDefault();
-							fileInput?.click();
-						}
-					}}
-					ondragover={(e) => {
-						e.preventDefault();
-						dragOver = true;
-					}}
-					ondragleave={() => {
-						dragOver = false;
-					}}
-					ondrop={(e) => {
-						e.preventDefault();
-						dragOver = false;
-						handleFiles(e.dataTransfer?.files ?? null);
-					}}
-				>
+		{#if !auth.ready}
+			<p class="quiet-state">Loading...</p>
+		{:else if !auth.session}
+			<p class="quiet-state">
+				<a href={`/login?next=${encodeURIComponent(page.url.pathname)}`}>Sign in to post.</a>
+			</p>
+		{:else if auth.profile === null}
+			<p class="quiet-state">
+				<a href="/welcome">Finish setting up your profile first.</a>
+			</p>
+		{:else if auth.profile}
+			<form onsubmit={handleSubmit}>
+				<p class="posting-as">Posting as @{auth.profile.username}</p>
+
+				<div class="field">
+					<label for="title">Title</label>
 					<input
-						type="file"
-						accept="image/*"
-						hidden
-						tabindex={-1}
-						aria-hidden="true"
-						bind:this={fileInput}
-						onchange={(e) => handleFiles(e.currentTarget.files)}
-					/>
-					{#if effectivePreviewUrl}
-						{#if !filePreviewUrl && imageLoadError}
-							<span class="hint image-error-hint">Could not load that image.</span>
-						{:else}
-							<img
-								src={effectivePreviewUrl}
-								alt="Outfit preview"
-								class="preview-image"
-								onerror={() => {
-									if (!filePreviewUrl) imageLoadError = true;
-								}}
-							/>
-						{/if}
-					{:else}
-						<p class="dropzone-prompt">
-							<span class="dropzone-icon" aria-hidden="true">📷</span>
-							Drag &amp; drop a photo here, or <span class="linklike">browse files</span>
-						</p>
-					{/if}
-				</div>
-				{#if fileError}
-					<span class="hint image-error-hint">{fileError}</span>
-				{/if}
-				{#if file}
-					<div class="file-row">
-						<span class="hint file-name">{file.name}</span>
-						<button type="button" class="text-button" onclick={clearFile}>Remove</button>
-					</div>
-				{/if}
-				<details class="url-fallback">
-					<summary>or paste an image URL</summary>
-					<input
-						id="image-url"
-						type="url"
-						name="imageUrl"
-						bind:value={imageUrl}
-						oninput={() => {
-							imageLoadError = false;
-						}}
-						placeholder="https://..."
-						maxlength={500}
+						id="title"
+						type="text"
+						name="title"
+						bind:value={title}
+						required
+						maxlength={120}
+						placeholder="Give your look a name"
 						disabled={submitting}
 					/>
-				</details>
-				{#if aiAvailable}
-					<button
-						type="button"
-						class="magic-button"
-						onclick={runMagicTag}
-						disabled={magicLoading || !debouncedPreviewUrl || imageLoadError}
-						title="Let Meta AI tag this outfit for you"
-					>
-						{magicLoading ? '✨ Analyzing…' : '✨ Magic Tag with AI'}
-					</button>
-					{#if !debouncedPreviewUrl && filePreviewUrl}
-						<span class="hint">Paste an image URL to use Magic Tag.</span>
-					{/if}
-					{#if magicError}
-						<span class="hint image-error-hint">{magicError}</span>
-					{/if}
-					{#if magicPieces.length > 0}
-						<ul class="magic-pieces">
-							{#each magicPieces as piece}
-								<li><strong>{piece.category}</strong> — {piece.label}</li>
-							{/each}
-						</ul>
-					{/if}
-				{/if}
-			</div>
-			<div class="field">
-				<label for="creator">Posting as</label>
-				<select
-					id="creator"
-					name="username"
-					bind:value={username}
-					disabled={submitting || users.length === 0}
-				>
-					{#each users as u}
-						<option value={u.username}>{u.displayName} (@{u.username})</option>
-					{/each}
-				</select>
-			</div>
-
-			<div class="field">
-				<label for="title">Title</label>
-				<input
-					id="title"
-					type="text"
-					name="title"
-					bind:value={title}
-					required
-					maxlength={120}
-					placeholder="Give your look a name"
-					disabled={submitting}
-				/>
-			</div>
-
-			<div class="field">
-				<label for="caption">Caption</label>
-				<textarea
-					id="caption"
-					name="caption"
-					bind:value={caption}
-					maxlength={2000}
-					rows="4"
-					placeholder="Describe the pieces, styling choices, or mood"
-					disabled={submitting}
-				></textarea>
-			</div>
-
-			<div class="field">
-				<label for="tags">
-					Tags <span class="hint">(up to 5)</span>
-				</label>
-				<input
-					id="tags"
-					type="text"
-					name="tags"
-					bind:value={tagsInput}
-					placeholder="streetwear, monochrome, thrift"
-					disabled={submitting}
-				/>
-			</div>
-
-			<fieldset class="field accent-field">
-				<legend>Accent color</legend>
-				<div class="swatch-row" role="radiogroup" aria-label="Accent color">
-					{#each accentColors as color}
-						<label class="swatch-label">
-							<input
-								type="radio"
-								name="accent"
-								value={color}
-								bind:group={accent}
-								disabled={submitting}
-							/>
-							<span
-								class="swatch"
-								style={`--swatch-color:${color}`}
-								title={color}
-							></span>
-							<span class="sr-only">{color}</span>
-						</label>
-					{/each}
 				</div>
-			</fieldset>
 
-			<div class="form-actions">
-				<button
-					type="submit"
-					class="primary-button"
-					disabled={submitting || usersError !== null || users.length === 0}
-				>
-					{submitting ? 'Publishing...' : 'Publish OoTD'}
-				</button>
-			</div>
-		</form>
+				<div class="field">
+					<label for="caption">Caption</label>
+					<textarea
+						id="caption"
+						name="caption"
+						bind:value={caption}
+						maxlength={2000}
+						rows="4"
+						placeholder="Describe the pieces, styling choices, or mood"
+						disabled={submitting}
+					></textarea>
+				</div>
+				<div class="field">
+					<span class="field-label" id="photo-label">
+						Photo <span class="hint">(optional)</span>
+					</span>
+					<div
+						class="dropzone"
+						class:dragging={dragOver}
+						role="button"
+						tabindex="0"
+						aria-labelledby="photo-label"
+						onclick={() => fileInput?.click()}
+						onkeydown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								fileInput?.click();
+							}
+						}}
+						ondragover={(e) => {
+							e.preventDefault();
+							dragOver = true;
+						}}
+						ondragleave={() => {
+							dragOver = false;
+						}}
+						ondrop={(e) => {
+							e.preventDefault();
+							dragOver = false;
+							handleFiles(e.dataTransfer?.files ?? null);
+						}}
+					>
+						<input
+							type="file"
+							accept="image/*"
+							hidden
+							tabindex={-1}
+							aria-hidden="true"
+							bind:this={fileInput}
+							onchange={(e) => handleFiles(e.currentTarget.files)}
+						/>
+						{#if effectivePreviewUrl}
+							{#if !filePreviewUrl && imageLoadError}
+								<span class="hint image-error-hint">Could not load that image.</span>
+							{:else}
+								<img
+									src={effectivePreviewUrl}
+									alt="Outfit preview"
+									class="preview-image"
+									onerror={() => {
+										if (!filePreviewUrl) imageLoadError = true;
+									}}
+								/>
+							{/if}
+						{:else}
+							<p class="dropzone-prompt">
+								<span class="dropzone-icon" aria-hidden="true">📷</span>
+								Drag &amp; drop a photo here, or <span class="linklike">browse files</span>
+							</p>
+						{/if}
+					</div>
+					{#if fileError}
+						<span class="hint image-error-hint">{fileError}</span>
+					{/if}
+					{#if file}
+						<div class="file-row">
+							<span class="hint file-name">{uploading ? 'Uploading…' : file.name}</span>
+							<button type="button" class="text-button" onclick={clearFile}>Remove</button>
+						</div>
+					{/if}
+					<details class="url-fallback">
+						<summary>or paste an image URL</summary>
+						<input
+							id="image-url"
+							type="url"
+							name="imageUrl"
+							bind:value={imageUrl}
+							oninput={() => {
+								imageLoadError = false;
+							}}
+							placeholder="https://..."
+							maxlength={500}
+							disabled={submitting}
+						/>
+					</details>
+					{#if aiAvailable}
+						<button
+							type="button"
+							class="magic-button"
+							onclick={runMagicTag}
+							disabled={magicLoading || !debouncedPreviewUrl || imageLoadError}
+							title="Let Meta AI tag this outfit for you"
+						>
+							{magicLoading ? '✨ Analyzing…' : '✨ Magic Tag with AI'}
+						</button>
+						{#if !debouncedPreviewUrl && filePreviewUrl}
+							<span class="hint">Paste an image URL to use Magic Tag.</span>
+						{/if}
+						{#if magicError}
+							<span class="hint image-error-hint">{magicError}</span>
+						{/if}
+						{#if magicPieces.length > 0}
+							<ul class="magic-pieces">
+								{#each magicPieces as piece}
+									<li><strong>{piece.category}</strong> — {piece.label}</li>
+								{/each}
+							</ul>
+						{/if}
+					{/if}
+				</div>
+
+				<div class="field">
+					<label for="tags">
+						Tags <span class="hint">(up to 5)</span>
+					</label>
+					<input
+						id="tags"
+						type="text"
+						name="tags"
+						bind:value={tagsInput}
+						placeholder="streetwear, monochrome, thrift"
+						disabled={submitting}
+					/>
+				</div>
+
+				<fieldset class="field accent-field">
+					<legend>Accent color</legend>
+					<div class="swatch-row" role="radiogroup" aria-label="Accent color">
+						{#each accentColors as color}
+							<label class="swatch-label">
+								<input
+									type="radio"
+									name="accent"
+									value={color}
+									bind:group={accent}
+									disabled={submitting}
+								/>
+								<span
+									class="swatch"
+									style={`--swatch-color:${color}`}
+									title={color}
+								></span>
+								<span class="sr-only">{color}</span>
+							</label>
+						{/each}
+					</div>
+				</fieldset>
+
+				<div class="form-actions">
+					<button
+						type="submit"
+						class="primary-button"
+						disabled={submitting || uploading}
+					>
+						{submitting ? 'Publishing...' : 'Publish OoTD'}
+					</button>
+				</div>
+			</form>
+		{/if}
 	</section>
 </main>
 
@@ -487,6 +523,30 @@
 		font-size: 0.88rem;
 		line-height: 1.4;
 	}
+	.quiet-state {
+		margin: 0 0 1.5rem;
+		color: var(--t-muted);
+		font-size: 0.95rem;
+		line-height: 1.5;
+	}
+
+	.quiet-state a {
+		color: var(--t-fg);
+		text-decoration: underline;
+		text-underline-offset: 3px;
+		transition: color 0.15s ease;
+	}
+
+	.quiet-state a:hover {
+		color: var(--t-accent);
+	}
+
+	.posting-as {
+		margin: 0;
+		color: var(--t-muted);
+		font-size: 0.88rem;
+		font-weight: 500;
+	}
 
 	form {
 		display: flex;
@@ -518,7 +578,6 @@
 
 	input[type='text'],
 	input[type='url'],
-	select,
 	textarea {
 		width: 100%;
 		padding: 0.75rem 1rem;
@@ -532,7 +591,6 @@
 
 	input[type='text']:focus,
 	input[type='url']:focus,
-	select:focus,
 	textarea:focus {
 		outline: 2px solid var(--t-fg);
 		outline-offset: 1px;
@@ -540,7 +598,6 @@
 
 	input[type='text']:disabled,
 	input[type='url']:disabled,
-	select:disabled,
 	textarea:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
@@ -656,13 +713,6 @@
 
 	.url-fallback[open] summary {
 		margin-bottom: 0.6rem;
-	}
-
-	.dev-note {
-		margin: 0 0 1.5rem;
-		font-size: 0.75rem;
-		font-family: ui-monospace, monospace;
-		color: var(--t-muted);
 	}
 
 	.magic-button {

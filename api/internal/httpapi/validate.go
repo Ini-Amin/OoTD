@@ -9,21 +9,41 @@ import (
 )
 
 type newOutfitInput struct {
-	Username string   `json:"username"`
-	Title    string   `json:"title"`
-	Caption  string   `json:"caption"`
-	Tags     []string `json:"tags"`
-	Accent   string   `json:"accent"`
-	ImageURL string   `json:"imageUrl"`
+	Title    string       `json:"title"`
+	Caption  string       `json:"caption"`
+	Tags     []string     `json:"tags"`
+	Accent   string       `json:"accent"`
+	ImageURL string       `json:"imageUrl"`
+	Pieces   []magicPiece `json:"pieces"`
 }
 
+// maxOutfitPieces caps AI-suggested pieces per outfit at publish time.
+const maxOutfitPieces = 12
+
 var accentRegex = regexp.MustCompile(`^#[0-9a-f]{6}$`)
+var usernameRegex = regexp.MustCompile(`^[a-z0-9_]{3,30}$`)
+
+func validateProfile(username, displayName string) (string, string, error) {
+	u := strings.ToLower(strings.TrimSpace(username))
+	uLen := utf8.RuneCountInString(u)
+	if uLen < 3 || uLen > 30 {
+		return "", "", errors.New("username must be between 3 and 30 characters")
+	}
+	if !usernameRegex.MatchString(u) {
+		return "", "", errors.New("username must contain only lowercase letters, numbers, and underscores")
+	}
+
+	d := strings.TrimSpace(displayName)
+	dLen := utf8.RuneCountInString(d)
+	if dLen < 1 || dLen > 60 {
+		return "", "", errors.New("displayName must be between 1 and 60 characters")
+	}
+
+	return u, d, nil
+}
 
 func validateNewOutfit(in newOutfitInput) (newOutfitInput, error) {
 	var cleaned newOutfitInput
-
-	cleaned.Username = strings.TrimSpace(in.Username)
-
 	title := strings.TrimSpace(in.Title)
 	titleLen := utf8.RuneCountInString(title)
 	if titleLen < 1 || titleLen > 120 {
@@ -72,27 +92,28 @@ func validateNewOutfit(in newOutfitInput) (newOutfitInput, error) {
 		}
 		cleaned.ImageURL = in.ImageURL
 	}
+
+	// Pieces come from Magic Tag suggestions; drop anything malformed rather
+	// than failing the whole publish, and cap the count.
+	cleaned.Pieces = sanitizePieces(in.Pieces)
+	if len(cleaned.Pieces) > maxOutfitPieces {
+		cleaned.Pieces = cleaned.Pieces[:maxOutfitPieces]
+	}
 	return cleaned, nil
 }
 
 type craftRequestInput struct {
-	Username    string  `json:"username"`
 	Category    string  `json:"category"`
 	Description string  `json:"description"`
 	BudgetIDR   *int64  `json:"budgetIdr"`
 	OutfitID    *string `json:"outfitId"`
 	PieceID     *string `json:"pieceId"`
+	OutfitLabel *string `json:"outfitLabel"`
+	PieceLabel  *string `json:"pieceLabel"`
 }
 
 func validateCraftRequest(in craftRequestInput) (craftRequestInput, error) {
 	var cleaned craftRequestInput
-
-	// ponytail: username is trusted from the client payload until session auth is introduced; verify against users table.
-	username := strings.TrimSpace(in.Username)
-	if username == "" {
-		return cleaned, errors.New("username required")
-	}
-	cleaned.Username = username
 
 	cat := strings.TrimSpace(in.Category)
 	switch cat {
@@ -131,6 +152,22 @@ func validateCraftRequest(in craftRequestInput) (craftRequestInput, error) {
 			return cleaned, errors.New("pieceId must be a valid uuid")
 		}
 		cleaned.PieceID = &pid
+	}
+
+	if in.OutfitLabel != nil && strings.TrimSpace(*in.OutfitLabel) != "" {
+		lbl := strings.TrimSpace(*in.OutfitLabel)
+		if utf8.RuneCountInString(lbl) > 120 {
+			return cleaned, errors.New("outfitLabel must be at most 120 characters")
+		}
+		cleaned.OutfitLabel = &lbl
+	}
+
+	if in.PieceLabel != nil && strings.TrimSpace(*in.PieceLabel) != "" {
+		lbl := strings.TrimSpace(*in.PieceLabel)
+		if utf8.RuneCountInString(lbl) > 120 {
+			return cleaned, errors.New("pieceLabel must be at most 120 characters")
+		}
+		cleaned.PieceLabel = &lbl
 	}
 
 	return cleaned, nil

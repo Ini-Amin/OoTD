@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { CATEGORIES, CATEGORY_LABEL, type Category, type ClosetPiece } from '$lib/pieces';
 	import { apiBase } from '$lib/outfits';
+	import { auth, authHeaders } from '$lib/auth.svelte';
 
 	let {
 		category,
@@ -13,16 +14,6 @@
 		onclose?: () => void;
 	} = $props();
 
-	type User = {
-		username: string;
-		displayName: string;
-	};
-
-	let users = $state<User[]>([]);
-	let usersError = $state<string | null>(null);
-
-	// ponytail: username trusted from /v1/users until auth exists
-	let username = $state('');
 	let selectedCategory = $state<Category>('top');
 	let description = $state('');
 
@@ -59,24 +50,13 @@
 		return `background-image: url('${p.imageUrl}'); background-size: calc(100% / ${safeW}) calc(100% / ${safeH}); background-position: ${posX}% ${posY}%;`;
 	}
 
-	onMount(async () => {
-		try {
-			const res = await fetch(`${apiBase}/v1/users`);
-			if (!res.ok) throw new Error('API unreachable');
-			const data = (await res.json()) as { users: User[] };
-			if (!data.users || data.users.length === 0) {
-				throw new Error('No users returned');
-			}
-			users = data.users;
-			username = users[0].username;
-		} catch {
-			usersError = 'The API is unreachable.';
-		}
+	onMount(() => {
+		auth.init();
 	});
 
 	async function handleSubmit(event: SubmitEvent) {
 		event.preventDefault();
-		if (submitting || Boolean(usersError) || users.length === 0) return;
+		if (submitting || !auth.session || !auth.profile) return;
 
 		const trimmed = description.trim();
 		if (trimmed.length < 10 || trimmed.length > 1000) {
@@ -97,28 +77,33 @@
 		submitting = true;
 		errorMessage = null;
 
+		const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 		const payload = {
-			username,
 			category: selectedCategory,
 			description: trimmed,
 			budgetIdr,
-			outfitId: piece?.outfitId ?? null,
-			pieceId: piece?.id && !piece.id.includes(':') ? piece.id : null
+			outfitId: piece?.outfitId && uuidRe.test(piece.outfitId) ? piece.outfitId : null,
+			pieceId: piece?.id && uuidRe.test(piece.id) ? piece.id : null,
+			outfitLabel: piece?.outfitTitle?.trim().slice(0, 120) || null,
+			pieceLabel: piece?.label?.trim().slice(0, 120) || null
 		};
 
 		try {
 			const res = await fetch(`${apiBase}/v1/requests`, {
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+				headers: { 'content-type': 'application/json', ...authHeaders() },
 				body: JSON.stringify(payload)
 			});
 
 			if (!res.ok) {
-				const data = (await res.json().catch(() => null)) as { error?: string } | null;
-				errorMessage = data?.error ?? `Request failed (${res.status})`;
+				if (res.status === 401) {
+					errorMessage = 'Your session expired. Sign in again.';
+				} else {
+					const data = (await res.json().catch(() => null)) as { error?: string } | null;
+					errorMessage = data?.error ?? `Request failed (${res.status})`;
+				}
 				return;
 			}
-
 			success = true;
 		} catch (err) {
 			errorMessage = err instanceof Error ? err.message : 'Network error';
@@ -167,99 +152,93 @@
 			</div>
 		{/if}
 
-		{#if usersError}
-			<p class="error-region" role="alert">{usersError}</p>
-		{/if}
-
 		{#if errorMessage}
 			<p class="error-region" role="alert">{errorMessage}</p>
 		{/if}
 
-		<form onsubmit={handleSubmit}>
-			<div class="field">
-				<label for="craft-username">Posting as</label>
-				<select
-					id="craft-username"
-					bind:value={username}
-					disabled={submitting || Boolean(usersError) || users.length === 0}
-					required
-				>
-					{#each users as user}
-						<option value={user.username}>
-							{user.displayName} (@{user.username})
-						</option>
-					{/each}
-				</select>
-			</div>
+		{#if !auth.ready}
+			<p class="quiet-state">Loading...</p>
+		{:else if !auth.session}
+			<p class="quiet-state">
+				<a href={`/login?next=${encodeURIComponent('/mannequin')}`}>Sign in to send a request.</a>
+			</p>
+		{:else if auth.profile === null}
+			<p class="quiet-state">
+				<a href="/welcome">Finish setting up your profile first.</a>
+			</p>
+		{:else if auth.profile}
+			<form onsubmit={handleSubmit}>
+				<p class="posting-as">Posting as @{auth.profile.username}</p>
 
-			<div class="field">
-				<label for="craft-category">Piece type</label>
-				<select
-					id="craft-category"
-					bind:value={selectedCategory}
-					onchange={() => {
-						userEditedCategory = true;
-					}}
-					disabled={submitting}
-					required
-				>
-					{#each CATEGORIES as cat}
-						<option value={cat}>{CATEGORY_LABEL[cat]}</option>
-					{/each}
-				</select>
-			</div>
-
-			<div class="field">
-				<label for="craft-desc">What should they make?</label>
-				<textarea
-					id="craft-desc"
-					bind:value={description}
-					oninput={() => {
-						userEditedDescription = true;
-					}}
-					rows="4"
-					minlength="10"
-					maxlength="1000"
-					required
-					disabled={submitting}
-					placeholder="Describe what you want made, materials, fit, details..."
-				></textarea>
-			</div>
-
-			<div class="field">
-				<label for="craft-budget">Budget (IDR, optional)</label>
-				<input
-					type="number"
-					id="craft-budget"
-					bind:value={budgetInput}
-					min="0"
-					max="1000000000"
-					step="1"
-					placeholder="e.g. 500000"
-					disabled={submitting}
-				/>
-			</div>
-
-			<div class="actions">
-				<button
-					type="submit"
-					class="btn-primary"
-					disabled={submitting || Boolean(usersError) || users.length === 0}
-				>
-					{submitting ? 'Sending...' : 'Send request'}
-				</button>
-				{#if onclose}
-					<button
-						type="button"
-						class="btn-secondary"
+				<div class="field">
+					<label for="craft-category">Piece type</label>
+					<select
+						id="craft-category"
+						bind:value={selectedCategory}
+						onchange={() => {
+							userEditedCategory = true;
+						}}
 						disabled={submitting}
-						onclick={onclose}
+						required
 					>
-						Cancel
+						{#each CATEGORIES as cat}
+							<option value={cat}>{CATEGORY_LABEL[cat]}</option>
+						{/each}
+					</select>
+				</div>
+
+				<div class="field">
+					<label for="craft-desc">What should they make?</label>
+					<textarea
+						id="craft-desc"
+						bind:value={description}
+						oninput={() => {
+							userEditedDescription = true;
+						}}
+						rows="4"
+						minlength="10"
+						maxlength="1000"
+						required
+						disabled={submitting}
+						placeholder="Describe what you want made, materials, fit, details..."
+					></textarea>
+				</div>
+
+				<div class="field">
+					<label for="craft-budget">Budget (IDR, optional)</label>
+					<input
+						type="number"
+						id="craft-budget"
+						bind:value={budgetInput}
+						min="0"
+						max="1000000000"
+						step="1"
+						placeholder="e.g. 500000"
+						disabled={submitting}
+					/>
+				</div>
+
+				<div class="actions">
+					<button
+						type="submit"
+						class="btn-primary"
+						disabled={submitting}
+					>
+						{submitting ? 'Sending...' : 'Send request'}
 					</button>
-				{/if}
-			</div>
-		</form>
+					{#if onclose}
+						<button
+							type="button"
+							class="btn-secondary"
+							disabled={submitting}
+							onclick={onclose}
+						>
+							Cancel
+						</button>
+					{/if}
+				</div>
+			</form>
+		{/if}
 	{/if}
 </div>
 
@@ -349,6 +328,30 @@
 		color: var(--t-fg);
 		font-size: 0.85rem;
 		line-height: 1.4;
+	}
+	.quiet-state {
+		margin: 0;
+		color: var(--t-muted);
+		font-size: 0.95rem;
+		line-height: 1.5;
+	}
+
+	.quiet-state a {
+		color: var(--t-fg);
+		text-decoration: underline;
+		text-underline-offset: 3px;
+		transition: color 0.15s ease;
+	}
+
+	.quiet-state a:hover {
+		color: var(--t-accent);
+	}
+
+	.posting-as {
+		margin: 0;
+		color: var(--t-muted);
+		font-size: 0.84rem;
+		font-weight: 500;
 	}
 
 	form {

@@ -2,14 +2,26 @@
 	import { onMount } from 'svelte';
 	import * as THREE from 'three';
 	import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-	import { CATEGORIES, CATEGORY_LABEL, type Category, type ClosetPiece } from '$lib/pieces';
+	import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+	import {
+		CATEGORIES,
+		CATEGORY_LABEL,
+		type Category,
+		type ClosetPiece,
+		type AvatarCustomization,
+		DEFAULT_AVATAR_CUSTOMIZATION
+	} from '$lib/pieces';
 
 	let {
 		worn = {},
-		height = '70vh'
+		height = '70vh',
+		model = 'xbot',
+		customization = DEFAULT_AVATAR_CUSTOMIZATION
 	}: {
 		worn: Partial<Record<Category, ClosetPiece | undefined>>;
 		height?: string;
+		model?: 'mannequin' | 'michelle' | 'xbot';
+		customization?: AvatarCustomization;
 	} = $props();
 
 	type ShellEntry = {
@@ -41,6 +53,12 @@
 	const mannequinGeometries: THREE.BufferGeometry[] = [];
 	let mannequinMaterial: THREE.MeshStandardMaterial | null = null;
 	let mannequinGroup: THREE.Group | null = null;
+	let avatarGroup: THREE.Group | null = null;
+	let gltfLoader: GLTFLoader | null = null;
+	let mixer: THREE.AnimationMixer | null = null;
+	let activeGltfClips: THREE.AnimationClip[] = [];
+	let currentAction: THREE.AnimationAction | null = null;
+	const clock = new THREE.Clock();
 
 	const ariaLabel = $derived.by(() => {
 		const active = CATEGORIES.filter((cat) => !!worn?.[cat]).map((cat) => CATEGORY_LABEL[cat]);
@@ -64,9 +82,13 @@
 			rafId = null;
 			return;
 		}
+		if (mixer) {
+			const delta = clock.getDelta();
+			mixer.update(delta);
+		}
 		const stillMoving = controls.update();
 		renderer.render(scene, camera);
-		if (stillMoving) {
+		if (stillMoving || mixer !== null) {
 			rafId = requestAnimationFrame(loop);
 		} else {
 			animating = false;
@@ -535,6 +557,229 @@
 		syncWorn(currentWorn);
 	});
 
+	function applyCustomizationToModel(): void {
+		if (!avatarGroup || !avatarGroup.children.length) return;
+		const root = avatarGroup.children[0];
+		if (!root) return;
+
+		// 1. Overall height & base scale
+		const h = customization.height ?? 1.0;
+		root.scale.set(1.05 * h, 1.05 * h, 1.05 * h);
+
+		// Helper to find bones with or without Mixamo prefix
+		const findBone = (name: string): THREE.Object3D | undefined => {
+			return (
+				root.getObjectByName(name) ||
+				root.getObjectByName(`mixamorig${name}`) ||
+				root.getObjectByName(`mixamorig:${name}`)
+			);
+		};
+
+		// 2. Bone scaling
+		const hips = findBone('Hips');
+		const spine = findBone('Spine');
+		const spine2 = findBone('Spine2');
+		const leftShoulder = findBone('LeftShoulder');
+		const rightShoulder = findBone('RightShoulder');
+		const leftArm = findBone('LeftArm');
+		const rightArm = findBone('RightArm');
+		const head = findBone('Head');
+
+		const sHips = customization.hips ?? 1.0;
+		const sWaist = customization.waist ?? 1.0;
+		const sChest = customization.chest ?? 1.0;
+		const sShoulders = customization.shoulders ?? 1.0;
+		const sHead = customization.headSize ?? 1.0;
+
+		if (hips) {
+			hips.scale.set(sHips, 1, sHips);
+		}
+		if (spine) {
+			const factor = sWaist / (sHips || 1.0);
+			spine.scale.set(factor, 1, factor);
+		}
+		if (spine2) {
+			const factor = sChest / (sWaist || 1.0);
+			spine2.scale.set(factor, 1, factor);
+		}
+		if (leftShoulder && rightShoulder) {
+			leftShoulder.scale.set(sShoulders, sShoulders, sShoulders);
+			rightShoulder.scale.set(sShoulders, sShoulders, sShoulders);
+			const inv = 1 / (sShoulders || 1.0);
+			if (leftArm) leftArm.scale.set(inv, inv, inv);
+			if (rightArm) rightArm.scale.set(inv, inv, inv);
+		}
+		if (head) {
+			head.scale.set(sHead, sHead, sHead);
+		}
+
+		// 3. Skin tone / Material tint (Joints darker accent, body surface skin tone)
+		if (customization.skinTone) {
+			const tone = new THREE.Color(customization.skinTone);
+			const jointTone = tone.clone().multiplyScalar(0.42);
+
+			root.traverse((child) => {
+				if ((child as THREE.Mesh).isMesh) {
+					const mesh = child as THREE.Mesh;
+					if (mesh.material) {
+						const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+						for (const m of mats) {
+							if ('color' in m && (m as THREE.MeshStandardMaterial).color) {
+								const stdMat = m as THREE.MeshStandardMaterial;
+								const isJoint =
+									mesh.name.toLowerCase().includes('joint') ||
+									(m.name && m.name.toLowerCase().includes('joint'));
+								if (isJoint) {
+									stdMat.color.copy(jointTone);
+									stdMat.roughness = 0.55;
+									stdMat.metalness = 0.35;
+								} else {
+									stdMat.color.copy(tone);
+									stdMat.roughness = 0.8;
+									stdMat.metalness = 0.05;
+								}
+								stdMat.needsUpdate = true;
+							}
+						}
+					}
+				}
+			});
+		}
+
+		// 4. Animation
+		if (mixer && activeGltfClips.length > 0) {
+			const targetAnim = customization.animation ?? 'idle';
+			if (targetAnim === 'stand') {
+				mixer.stopAllAction();
+				currentAction = null;
+			} else {
+				let clipToPlay: THREE.AnimationClip | undefined;
+				if (targetAnim === 'walk') {
+					clipToPlay = activeGltfClips.find((c) => c.name.toLowerCase().includes('walk'));
+				} else if (targetAnim === 'pose') {
+					clipToPlay = activeGltfClips.find(
+						(c) =>
+							c.name.toLowerCase().includes('agree') ||
+							c.name.toLowerCase().includes('pose') ||
+							c.name.toLowerCase().includes('headshake')
+					);
+				} else {
+					clipToPlay = activeGltfClips.find(
+						(c) =>
+							c.name.toLowerCase().includes('idle') ||
+							c.name.toLowerCase().includes('samba')
+					);
+				}
+				if (!clipToPlay) {
+					clipToPlay = activeGltfClips[0];
+				}
+
+				if (clipToPlay) {
+					const nextAction = mixer.clipAction(clipToPlay);
+					if (currentAction !== nextAction) {
+						if (currentAction) {
+							currentAction.fadeOut(0.3);
+						}
+						nextAction.reset().fadeIn(0.3).play();
+						currentAction = nextAction;
+					}
+				}
+			}
+		}
+
+		requestFrame();
+	}
+
+	function updateModel(currentModel: 'mannequin' | 'michelle' | 'xbot'): void {
+		if (!scene || !avatarGroup) return;
+		if (mannequinGroup) {
+			mannequinGroup.visible = currentModel === 'mannequin';
+		}
+		if (currentModel === 'mannequin') {
+			avatarGroup.clear();
+			if (mixer) {
+				mixer.stopAllAction();
+				mixer = null;
+			}
+			currentAction = null;
+			activeGltfClips = [];
+			requestFrame();
+			return;
+		}
+
+		if (!gltfLoader) {
+			gltfLoader = new GLTFLoader();
+		}
+
+		avatarGroup.clear();
+		if (mixer) {
+			mixer.stopAllAction();
+			mixer = null;
+		}
+		currentAction = null;
+		activeGltfClips = [];
+
+		const modelPath = currentModel === 'michelle' ? '/models/michelle.glb' : '/models/xbot.glb';
+		gltfLoader.load(
+			modelPath,
+			(gltf) => {
+				if (destroyed || !scene || !avatarGroup || model !== currentModel) return;
+				const currentGroup = avatarGroup;
+				const obj = gltf.scene;
+				obj.position.set(0, 0, 0);
+
+				obj.traverse((child) => {
+					if ((child as THREE.Mesh).isMesh) {
+						child.castShadow = true;
+						child.receiveShadow = true;
+					}
+				});
+
+				// Strip scale tracks so animations don't clobber custom bone scaling
+				for (const clip of gltf.animations || []) {
+					clip.tracks = clip.tracks.filter((t) => !t.name.endsWith('.scale'));
+				}
+				activeGltfClips = gltf.animations || [];
+				if (activeGltfClips.length > 0) {
+					mixer = new THREE.AnimationMixer(obj);
+				}
+
+				currentGroup.clear();
+				currentGroup.add(obj);
+				applyCustomizationToModel();
+				requestFrame();
+			},
+			undefined,
+			(err) => {
+				console.error('Failed to load GLTF avatar:', err);
+				if (mannequinGroup) mannequinGroup.visible = true;
+				requestFrame();
+			}
+		);
+	}
+
+	$effect(() => {
+		const m = model;
+		if (mounted && scene) {
+			updateModel(m);
+		}
+	});
+
+	$effect(() => {
+		void customization.height;
+		void customization.shoulders;
+		void customization.chest;
+		void customization.waist;
+		void customization.hips;
+		void customization.headSize;
+		void customization.skinTone;
+		void customization.animation;
+
+		if (mounted && scene && avatarGroup) {
+			applyCustomizationToModel();
+		}
+	});
+
 	onMount(() => {
 		if (!containerEl) return;
 
@@ -703,7 +948,8 @@
 		mannequinGroup.add(leftArm, rightArm);
 
 		scene.add(mannequinGroup);
-
+		avatarGroup = new THREE.Group();
+		scene.add(avatarGroup);
 		const resizeObserver = new ResizeObserver((entries) => {
 			if (destroyed || !renderer || !camera) return;
 			for (const entry of entries) {
@@ -746,6 +992,15 @@
 			}
 			activeShells.clear();
 
+			if (avatarGroup) {
+				avatarGroup.clear();
+				activeScene.remove(avatarGroup);
+				avatarGroup = null;
+			}
+			if (mixer) {
+				mixer.stopAllAction();
+				mixer = null;
+			}
 			if (mannequinGroup) {
 				activeScene.remove(mannequinGroup);
 			}

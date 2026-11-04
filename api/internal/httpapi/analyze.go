@@ -2,9 +2,11 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // Magic Tag + AI Stylist endpoints. Both require the AI client to be
@@ -41,19 +43,30 @@ type magicResult struct {
 	Pieces       []magicPiece `json:"pieces"`
 }
 
-func (s *server) analyzeOutfit(w http.ResponseWriter, r *http.Request) {
+func (s *server) analyzeOutfit(w http.ResponseWriter, r *http.Request, claims *authClaims) {
 	if s.ai == nil {
 		writeError(w, http.StatusServiceUnavailable, "ai not configured")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
 	var in analyzeInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+	if err := dec.Decode(&in); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	u, err := url.ParseRequestURI(strings.TrimSpace(in.ImageURL))
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 		writeError(w, http.StatusBadRequest, "image_url must be a valid http(s) URL")
+		return
+	}
+	if !s.checkLimit(w, "analyze:"+claims.Sub, 30, time.Hour) {
 		return
 	}
 
@@ -139,19 +152,30 @@ type stylistInput struct {
 	} `json:"history"`
 }
 
-func (s *server) stylistChat(w http.ResponseWriter, r *http.Request) {
+func (s *server) stylistChat(w http.ResponseWriter, r *http.Request, claims *authClaims) {
 	if s.ai == nil {
 		writeError(w, http.StatusServiceUnavailable, "ai not configured")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 128<<10)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
 	var in stylistInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+	if err := dec.Decode(&in); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	text := strings.TrimSpace(in.Message)
 	if text == "" || len(text) > 2000 {
 		writeError(w, http.StatusBadRequest, "message must be 1-2000 chars")
+		return
+	}
+	if !s.checkLimit(w, "stylist:"+claims.Sub, 60, time.Hour) {
 		return
 	}
 	history := make([][2]string, 0, len(in.History))

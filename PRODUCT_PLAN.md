@@ -38,14 +38,16 @@ Users can like, comment, save, share, or add OoTDs to their own collections.
 
 ## 3. Users and value
 
-| User | Main goal | OoTD value |
-|---|---|---|
-| Style explorer | Find fashion ideas | Personalized outfit feed, boards, trends, and search |
-| Creator / affiliate | Share outfits and possibly earn | Shoppable OoTDs, links, analytics, and a creator storefront |
-| Small fashion brand | Make products available to creators | Product catalog and product attribution without controlling the social feed |
-| Stylist / curator | Help others dress or plan looks | Portfolio, styling requests, optional payments, and tips |
-| Shopper | Find items that fit a desired look | Tagged products, alternatives, price information, and external links |
-| Circular-fashion user | Give unused clothes a new life | Future give-away, swap, resale, and donation listings |
+| User                  | Main goal                           | OoTD value                                                                  |
+| --------------------- | ----------------------------------- | --------------------------------------------------------------------------- |
+| Style explorer        | Find fashion ideas                  | Personalized outfit feed, boards, trends, and search                        |
+| Creator / affiliate   | Share outfits and possibly earn     | Shoppable OoTDs, links, analytics, and a creator storefront                 |
+| Small fashion brand   | Make products available to creators | Product catalog and product attribution without controlling the social feed |
+| Stylist / curator     | Help others dress or plan looks     | Portfolio, styling requests, optional payments, and tips                    |
+| Shopper               | Find items that fit a desired look  | Tagged products, alternatives, price information, and external links        |
+| Circular-fashion user | Give unused clothes a new life      | Future give-away, swap, resale, and donation listings                       |
+
+Craftsmaker Making request based on customer  and they can sell their crafts as small fashion brand...is this redundant?
 
 ---
 
@@ -354,21 +356,21 @@ For paid styling work, use a marketplace payment provider that supports payouts 
 
 ## 13. Core data model
 
-| Entity | Purpose |
-|---|---|
-| `User` | Profile, preferences, role, and customization settings |
-| `Outfit` | An OoTD post with media, caption, tags, and visibility |
-| `OutfitItem` | A tagged product or clothing item within an outfit |
-| `Product` | Catalog product details, price, URL, and brand attribution |
-| `BrandCatalog` | Verified brand and its catalog management data |
-| `Collection` | User-created saved outfit and product boards |
-| `Follow` | Relationship between users |
-| `Comment` | Comments and moderation state |
-| `StyleService` | Optional free, tip-based, or paid creator offerings |
-| `StylingRequest` | A request for help, requirements, progress, and delivery |
-| `Transaction` | Optional payments, tips, platform fee, and payout state |
-| `AffiliateClick` | Outbound-link tracking and attribution |
-| `PreLovedListing` | Future giveaway, swap, sale, or donation item listing |
+| Entity              | Purpose                                                    |
+| ------------------- | ---------------------------------------------------------- |
+| `User`            | Profile, preferences, role, and customization settings     |
+| `Outfit`          | An OoTD post with media, caption, tags, and visibility     |
+| `OutfitItem`      | A tagged product or clothing item within an outfit         |
+| `Product`         | Catalog product details, price, URL, and brand attribution |
+| `BrandCatalog`    | Verified brand and its catalog management data             |
+| `Collection`      | User-created saved outfit and product boards               |
+| `Follow`          | Relationship between users                                 |
+| `Comment`         | Comments and moderation state                              |
+| `StyleService`    | Optional free, tip-based, or paid creator offerings        |
+| `StylingRequest`  | A request for help, requirements, progress, and delivery   |
+| `Transaction`     | Optional payments, tips, platform fee, and payout state    |
+| `AffiliateClick`  | Outbound-link tracking and attribution                     |
+| `PreLovedListing` | Future giveaway, swap, sale, or donation item listing      |
 
 ---
 

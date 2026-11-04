@@ -63,9 +63,12 @@ Required env (copy `api/.env.example` to `api/.env`; the API does not read `.env
 
 ```text
 DATABASE_URL   Postgres connection string
+SUPABASE_URL   project URL; the API verifies Supabase Auth JWTs against its JWKS
 PORT           default 8080
 ALLOWED_ORIGIN web origin for CORS, default http://localhost:5173
 ```
+
+Web env (`web/.env`): `VITE_API_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (the anon key is public by design). Never put the service-role key in `web/`.
 
 Local Postgres without Docker:
 

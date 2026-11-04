@@ -9,10 +9,19 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func (s *server) createCraftRequest(w http.ResponseWriter, r *http.Request) {
+func (s *server) createCraftRequest(w http.ResponseWriter, r *http.Request, claims *authClaims) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
 	var in craftRequestInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if err := dec.Decode(&in); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -22,12 +31,11 @@ func (s *server) createCraftRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ponytail: username is trusted from the client payload until session auth is introduced; verify against users table.
 	var userID string
-	err = s.db.QueryRow(r.Context(), "SELECT id::text FROM users WHERE username = $1", cleaned.Username).Scan(&userID)
+	err = s.db.QueryRow(r.Context(), "SELECT id::text FROM users WHERE auth_id = $1::uuid", claims.Sub).Scan(&userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "unknown user")
+			writeError(w, http.StatusNotFound, "create your profile first")
 			return
 		}
 		serverError(w, err)
@@ -37,10 +45,10 @@ func (s *server) createCraftRequest(w http.ResponseWriter, r *http.Request) {
 	var reqID, status string
 	var createdAt time.Time
 	err = s.db.QueryRow(r.Context(), `
-		INSERT INTO craft_requests (user_id, category, description, budget_idr, outfit_id, piece_id)
-		VALUES ($1::uuid, $2, $3, $4, $5::uuid, $6::uuid)
+		INSERT INTO craft_requests (user_id, category, description, budget_idr, outfit_id, piece_id, outfit_label, piece_label)
+		VALUES ($1::uuid, $2, $3, $4, $5::uuid, $6::uuid, $7, $8)
 		RETURNING id::text, status, created_at
-	`, userID, cleaned.Category, cleaned.Description, cleaned.BudgetIDR, cleaned.OutfitID, cleaned.PieceID).Scan(&reqID, &status, &createdAt)
+	`, userID, cleaned.Category, cleaned.Description, cleaned.BudgetIDR, cleaned.OutfitID, cleaned.PieceID, cleaned.OutfitLabel, cleaned.PieceLabel).Scan(&reqID, &status, &createdAt)
 	if err != nil {
 		serverError(w, err)
 		return
