@@ -3,6 +3,13 @@
 	import { CATEGORIES, CATEGORY_LABEL, DEFAULT_BOX, type Category, type Piece } from '$lib/pieces';
 	import { closet } from '$lib/closet.svelte';
 	import { saved } from '$lib/saved.svelte';
+	import { auth, authHeaders } from '$lib/auth.svelte';
+	import {
+		claimAutoTagAttempt,
+		getCachedPieces,
+		setCachedPieces,
+		toValidPiece
+	} from '$lib/pieceCache';
 	import { apiBase, previewOutfits, ratioOf, type Outfit } from '$lib/outfits';
 	import CategoryIcon from '$lib/CategoryIcon.svelte';
 
@@ -26,6 +33,11 @@
 
 	let currentRequestId = 0;
 
+	// AI-tagged pieces for THIS outfit id only (from cache or a fresh
+	// background /v1/analyze call). Scoped by outfit id so a slow response
+	// can never leak boxes into another outfit.
+	let autoTag = $state<{ outfitId: string; pieces: Piece[] } | null>(null);
+
 	let isSaved = $derived(outfit ? saved.has(outfit.id) : false);
 	let saveCount = $derived(outfit ? outfit.savedBy + (isSaved ? 1 : 0) : 0);
 	let username = $derived(outfit ? outfit.handle.replace(/^@/, '') : '');
@@ -35,6 +47,9 @@
 			const current = outfit;
 			if (!current) return [];
 			if (current.pieces && current.pieces.length > 0) return current.pieces;
+			if (autoTag && autoTag.outfitId === current.id && autoTag.pieces.length > 0) {
+				return autoTag.pieces;
+			}
 			return CATEGORIES.map((cat) => ({
 				id: `${current.id}:${cat}`,
 				category: cat,
@@ -51,9 +66,24 @@
 
 	// Only outfits with real tagged pieces (e.g. via Magic Tag) get a highlight
 	// box. Synthetic suggested regions stay clickable for the closet, but never
-	// render a floating box over nothing.
+	// render a floating box over nothing. Cached/fresh auto-tag boxes count as
+	// real: they are model output, not DEFAULT_BOX guesses.
 	let hasTaggedPieces = $derived(
-		!!(outfit && outfit.pieces && outfit.pieces.length > 0)
+		!!(
+			outfit &&
+			((outfit.pieces && outfit.pieces.length > 0) ||
+				(autoTag && autoTag.outfitId === outfit.id && autoTag.pieces.length > 0))
+		)
+	);
+
+	let showAiBadge = $derived(
+		!!(
+			outfit &&
+			!(outfit.pieces && outfit.pieces.length > 0) &&
+			autoTag &&
+			autoTag.outfitId === outfit.id &&
+			autoTag.pieces.length > 0
+		)
 	);
 
 	function showToast(message: string, link?: string, linkText?: string) {
@@ -110,6 +140,39 @@
 			} catch {
 				// clipboard fallback
 			}
+		}
+	}
+
+	type AnalyzePiece = {
+		category: string;
+		label: string;
+		box?: { x: number; y: number; w: number; h: number };
+	};
+
+	// Background Magic Tag for untagged outfits. Silent by design: any
+	// failure (401/429/503/network, empty/invalid pieces) keeps the current
+	// untagged behavior with no error UI.
+	async function autoTagOutfit(outfitId: string, imageUrl: string) {
+		try {
+			const res = await fetch(`${apiBase}/v1/analyze`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', ...authHeaders() },
+				body: JSON.stringify({ image_url: imageUrl })
+			});
+			if (!res.ok) return;
+			const data = (await res.json()) as { pieces?: AnalyzePiece[] };
+			const mapped: Piece[] = [];
+			for (const item of data.pieces ?? []) {
+				const piece = toValidPiece(outfitId, { ...item, ...(item.box ?? {}) });
+				if (piece) mapped.push(piece);
+			}
+			if (mapped.length === 0) return;
+			setCachedPieces(outfitId, mapped);
+			if (outfit?.id === outfitId) {
+				autoTag = { outfitId, pieces: mapped };
+			}
+		} catch {
+			// Silent: keep untagged behavior.
 		}
 	}
 
@@ -171,6 +234,25 @@
 		const currentId = id;
 		imageError = false;
 		loadOutfit(currentId);
+	});
+
+	// Auto Magic Tag: untagged outfit + signed in + no cache entry ->
+	// one background POST /v1/analyze (https photos only, once per outfit
+	// per session). Re-runs when the session token arrives after load.
+	$effect(() => {
+		const current = outfit;
+		if (!current) return;
+		if (current.pieces && current.pieces.length > 0) return;
+		const cached = getCachedPieces(current.id);
+		if (cached && cached.length > 0) {
+			autoTag = { outfitId: current.id, pieces: cached };
+			return;
+		}
+		const url = current.imageUrl?.trim() ?? '';
+		if (!url.toLowerCase().startsWith('https://')) return;
+		if (!auth.token) return;
+		if (!claimAutoTagAttempt(current.id)) return;
+		void autoTagOutfit(current.id, url);
 	});
 </script>
 
@@ -319,6 +401,9 @@
 			<div class="meta-pane">
 				<div class="meta-header">
 					<h1 class="outfit-title">{outfit.title}</h1>
+					{#if showAiBadge}
+						<span class="ai-badge">AI tagged</span>
+					{/if}
 					<a href={`/u/${username}`} class="creator-link">
 						<span class="creator-avatar" style={`--avatar-accent: ${outfit.accent}`} aria-hidden="true">
 							{outfit.creator ? outfit.creator.slice(0, 1) : ''}
@@ -727,6 +812,20 @@
 		margin: 0;
 		color: var(--t-fg);
 		letter-spacing: -0.01em;
+	}
+
+	.ai-badge {
+		display: inline-block;
+		font-size: 0.68rem;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--t-fg);
+		border: 1px solid var(--t-line);
+		border-radius: 9999px;
+		padding: 0.1rem 0.5rem;
+		margin-top: 0.35rem;
+		opacity: 0.75;
 	}
 
 	.creator-link {
