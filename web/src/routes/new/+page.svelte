@@ -31,6 +31,12 @@
 	let submitting = $state(false);
 	let errorMessage = $state<string | null>(null);
 
+	// Magic Tag (Meta AI) state
+	let aiAvailable = $state(false);
+	let magicLoading = $state(false);
+	let magicError = $state<string | null>(null);
+	let magicPieces = $state<Array<{ category: string; label: string }>>([]);
+
 	$effect(() => {
 		const raw = imageUrl.trim();
 		imageLoadError = false;
@@ -70,7 +76,63 @@
 		} catch {
 			usersError = 'The API is unreachable.';
 		}
+
+		// Probe: 400 on empty body means AI is configured; 503 means it is not.
+		// The probe never reaches the model (validation fails first).
+		try {
+			const probe = await fetch(`${apiBase}/v1/analyze`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ image_url: '' })
+			});
+			aiAvailable = probe.status !== 503;
+		} catch {
+			aiAvailable = false;
+		}
 	});
+
+	async function runMagicTag() {
+		const raw = imageUrl.trim();
+		if (!raw || magicLoading) return;
+		magicLoading = true;
+		magicError = null;
+		try {
+			const res = await fetch(`${apiBase}/v1/analyze`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ image_url: raw })
+			});
+			if (res.status === 503) {
+				aiAvailable = false;
+				magicError = 'AI is not configured on the server.';
+				return;
+			}
+			if (res.status === 422) {
+				magicError = 'That photo does not look like an outfit.';
+				return;
+			}
+			if (!res.ok) throw new Error(`analyze failed (${res.status})`);
+			const data = (await res.json()) as {
+				title?: string;
+				caption?: string;
+				style_tags?: string[];
+				occasion_tags?: string[];
+				pieces?: Array<{ category: string; label: string }>;
+			};
+			if (data.title) title = data.title;
+			if (data.caption) caption = data.caption;
+			const tags = [...(data.style_tags ?? []), ...(data.occasion_tags ?? [])];
+			if (tags.length > 0) tagsInput = tags.join(', ');
+			magicPieces = (data.pieces ?? []).map((p) => ({
+				category: p.category,
+				label: p.label
+			}));
+		} catch {
+			magicError = 'Magic Tag failed. Check the photo URL and try again.';
+		} finally {
+			magicLoading = false;
+		}
+	}
 
 	async function handleSubmit(event: SubmitEvent) {
 		event.preventDefault();
@@ -219,6 +281,27 @@
 								imageLoadError = true;
 							}}
 						/>
+					{/if}
+				{/if}
+				{#if aiAvailable}
+					<button
+						type="button"
+						class="magic-button"
+						onclick={runMagicTag}
+						disabled={magicLoading || !debouncedPreviewUrl || imageLoadError}
+						title="Let Meta AI tag this outfit for you"
+					>
+						{magicLoading ? '✨ Analyzing…' : '✨ Magic Tag with AI'}
+					</button>
+					{#if magicError}
+						<span class="hint image-error-hint">{magicError}</span>
+					{/if}
+					{#if magicPieces.length > 0}
+						<ul class="magic-pieces">
+							{#each magicPieces as piece}
+								<li><strong>{piece.category}</strong> — {piece.label}</li>
+							{/each}
+						</ul>
 					{/if}
 				{/if}
 			</div>
@@ -389,6 +472,45 @@
 	.image-error-hint {
 		color: var(--t-accent);
 		margin-top: 0.25rem;
+	}
+
+	.magic-button {
+		align-self: flex-start;
+		margin-top: 0.5rem;
+		border: 1px solid var(--t-line);
+		border-radius: 999px;
+		background: var(--t-tint);
+		color: var(--t-fg);
+		font-weight: 700;
+		font-size: 0.85rem;
+		padding: 0.55rem 1.1rem;
+		cursor: pointer;
+	}
+
+	.magic-button:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.magic-pieces {
+		margin: 0.5rem 0 0;
+		padding: 0;
+		list-style: none;
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+		font-size: 0.85rem;
+	}
+
+	.magic-pieces li {
+		padding: 0.4rem 0.7rem;
+		border: 1px solid var(--t-line);
+		border-radius: var(--t-radius);
+		background: var(--t-surface);
+	}
+
+	.magic-pieces strong {
+		text-transform: capitalize;
 	}
 
 	.swatch-row {

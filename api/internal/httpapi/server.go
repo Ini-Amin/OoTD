@@ -10,6 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/ootd/ootd-api/internal/ai"
 )
 
 type Piece struct {
@@ -69,10 +71,11 @@ type UserProfile struct {
 
 type server struct {
 	db *pgxpool.Pool
+	ai *ai.Client
 }
 
 func NewServer(db *pgxpool.Pool, allowedOrigin string) http.Handler {
-	s := &server{db: db}
+	s := &server{db: db, ai: ai.NewClientFromEnv()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("GET /v1/tags", s.listTags)
@@ -84,6 +87,8 @@ func NewServer(db *pgxpool.Pool, allowedOrigin string) http.Handler {
 	mux.HandleFunc("GET /v1/themes", s.listThemes)
 	mux.HandleFunc("GET /v1/search", s.searchOutfits)
 	mux.HandleFunc("POST /v1/requests", s.createCraftRequest)
+	mux.HandleFunc("POST /v1/analyze", s.analyzeOutfit)
+	mux.HandleFunc("POST /v1/stylist", s.stylistChat)
 	return withCORS(mux, allowedOrigin)
 }
 
