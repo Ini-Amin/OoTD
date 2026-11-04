@@ -250,46 +250,6 @@
 
 		<form onsubmit={handleSubmit}>
 			<div class="field">
-				<label for="creator">Posting as</label>
-				<select
-					id="creator"
-					name="username"
-					bind:value={username}
-					disabled={submitting || users.length === 0}
-				>
-					{#each users as u}
-						<option value={u.username}>{u.displayName} (@{u.username})</option>
-					{/each}
-				</select>
-			</div>
-
-			<div class="field">
-				<label for="title">Title</label>
-				<input
-					id="title"
-					type="text"
-					name="title"
-					bind:value={title}
-					required
-					maxlength={120}
-					placeholder="Give your look a name"
-					disabled={submitting}
-				/>
-			</div>
-
-			<div class="field">
-				<label for="caption">Caption</label>
-				<textarea
-					id="caption"
-					name="caption"
-					bind:value={caption}
-					maxlength={2000}
-					rows="4"
-					placeholder="Describe the pieces, styling choices, or mood"
-					disabled={submitting}
-				></textarea>
-			</div>
-			<div class="field">
 				<span class="field-label" id="photo-label">
 					Photo <span class="hint">(optional)</span>
 				</span>
@@ -396,6 +356,46 @@
 						</ul>
 					{/if}
 				{/if}
+			</div>
+			<div class="field">
+				<label for="creator">Posting as</label>
+				<select
+					id="creator"
+					name="username"
+					bind:value={username}
+					disabled={submitting || users.length === 0}
+				>
+					{#each users as u}
+						<option value={u.username}>{u.displayName} (@{u.username})</option>
+					{/each}
+				</select>
+			</div>
+
+			<div class="field">
+				<label for="title">Title</label>
+				<input
+					id="title"
+					type="text"
+					name="title"
+					bind:value={title}
+					required
+					maxlength={120}
+					placeholder="Give your look a name"
+					disabled={submitting}
+				/>
+			</div>
+
+			<div class="field">
+				<label for="caption">Caption</label>
+				<textarea
+					id="caption"
+					name="caption"
+					bind:value={caption}
+					maxlength={2000}
+					rows="4"
+					placeholder="Describe the pieces, styling choices, or mood"
+					disabled={submitting}
+				></textarea>
 			</div>
 
 			<div class="field">
