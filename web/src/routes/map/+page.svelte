@@ -179,6 +179,7 @@
 					>
 						<span class="store-kind">{store.kind}</span>
 						<span class="store-name">{store.name}</span>
+						<span class="store-count">{store.skus.length} pieces</span>
 						{#if friendsHere(store.id).length}
 							<span class="store-friends"
 								>{friendsHere(store.id).length} friend{friendsHere(store.id).length > 1
@@ -475,6 +476,11 @@
 	.store-friends {
 		font-size: 0.68rem;
 		color: var(--t-accent);
+	}
+
+	.store-count {
+		font-size: 0.68rem;
+		color: var(--t-muted);
 	}
 
 	.pin {
