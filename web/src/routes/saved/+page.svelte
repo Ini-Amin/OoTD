@@ -2,9 +2,17 @@
 	import { onMount } from 'svelte';
 	import OutfitCard from '$lib/OutfitCard.svelte';
 	import { saved } from '$lib/saved.svelte';
+	import { auth } from '$lib/auth.svelte';
 
 	onMount(() => {
 		saved.init();
+	});
+
+	$effect(() => {
+		const token = auth.token;
+		if (token) {
+			void saved.loadFromServer();
+		}
 	});
 
 	function handleClear(): void {
@@ -42,7 +50,11 @@
 		{#if saved.items.length === 0}
 			<div class="empty-state">
 				<p class="empty-title">Nothing saved yet.</p>
-				<p class="empty-hint">Saves live in this browser until you sign in.</p>
+				<p class="empty-hint">
+					{auth.token
+						? 'Looks you save will appear here on every device.'
+						: 'Saves live in this browser until you sign in.'}
+				</p>
 				<a href="/" class="discover-link">Discover looks</a>
 			</div>
 		{:else}

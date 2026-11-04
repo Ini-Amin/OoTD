@@ -1,6 +1,22 @@
-import type { Outfit } from './outfits';
+import { apiBase, type Outfit } from './outfits';
+import { auth } from './auth.svelte';
 
 const STORAGE_KEY = 'ootd-saved';
+
+/** Persist one save-state change server-side. False on network error or logged out. */
+async function serverSave(id: string, shouldSave: boolean): Promise<boolean> {
+	const token = auth.token;
+	if (typeof window === 'undefined' || !token) return false;
+	try {
+		const res = await fetch(`${apiBase}/v1/outfits/${encodeURIComponent(id)}/save`, {
+			method: shouldSave ? 'POST' : 'DELETE',
+			headers: { Authorization: `Bearer ${token}` }
+		});
+		return res.ok;
+	} catch {
+		return false;
+	}
+}
 
 function isValidOutfit(item: unknown): item is Outfit {
 	if (!item || typeof item !== 'object') return false;
@@ -37,6 +53,7 @@ class SavedStore {
 
 	toggle(outfit: Outfit): void {
 		const index = this.#items.findIndex((o) => o.id === outfit.id);
+		const willSave = index < 0;
 		if (index >= 0) {
 			this.#items = this.#items.filter((o) => o.id !== outfit.id);
 		} else {
@@ -44,12 +61,52 @@ class SavedStore {
 		}
 		this.ids = this.#items.map((o) => o.id);
 		this.#persist();
+		// Server sync when logged in (fire-and-forget); local state is the
+		// fallback when logged out or on network error.
+		if (typeof window !== 'undefined' && auth.token) {
+			void serverSave(outfit.id, willSave);
+		}
 	}
 
 	clear(): void {
 		this.#items = [];
 		this.ids = [];
 		this.#persist();
+	}
+
+	/** Replace local items with the server save list, hydrated per outfit. No-op when logged out or on network error (local fallback kept). */
+	async loadFromServer(): Promise<void> {
+		const token = auth.token;
+		if (typeof window === 'undefined' || !token) return;
+		try {
+			const res = await fetch(`${apiBase}/v1/me/saves`, {
+				headers: { Authorization: `Bearer ${token}` }
+			});
+			if (!res.ok) return;
+			const data = (await res.json()) as { outfitIds?: unknown };
+			if (!Array.isArray(data.outfitIds)) return;
+			const ids = data.outfitIds.filter((v): v is string => typeof v === 'string').slice(0, 50);
+			// Follow-up: add a batch endpoint (e.g. GET /v1/outfits?ids=...) to
+			// avoid N+1 per-id fetches here.
+			const results = await Promise.all(
+				ids.map(async (outfitId): Promise<Outfit | null> => {
+					try {
+						const r = await fetch(`${apiBase}/v1/outfits/${encodeURIComponent(outfitId)}`);
+						if (!r.ok) return null;
+						const body = (await r.json()) as { outfit?: unknown };
+						return isValidOutfit(body.outfit) ? body.outfit : null;
+					} catch {
+						return null;
+					}
+				})
+			);
+			const valid = results.filter((o): o is Outfit => o !== null);
+			this.#items = valid;
+			this.ids = valid.map((o) => o.id);
+			this.#persist();
+		} catch {
+			// keep local fallback
+		}
 	}
 
 	init(): void {
