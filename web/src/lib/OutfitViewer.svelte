@@ -111,16 +111,15 @@
 	}
 
 	async function handleShare() {
-		if (!outfit) return;
-		const shareData = {
-			title: outfit.title,
-			url: typeof window !== 'undefined' ? window.location.href : ''
-		};
+		if (!outfit || typeof window === 'undefined') return;
+		// Always share the canonical deep link so Share works from the feed
+		// modal too (where location.href is the feed, not the look).
+		const url = `${window.location.origin}/o/${outfit.id}`;
+		const shareData = { title: outfit.title, text: outfit.title, url };
 		if (
 			typeof navigator !== 'undefined' &&
 			navigator.share &&
-			navigator.canShare &&
-			navigator.canShare(shareData)
+			(!navigator.canShare || navigator.canShare(shareData))
 		) {
 			try {
 				await navigator.share(shareData);
@@ -131,15 +130,18 @@
 		}
 		if (typeof navigator !== 'undefined' && navigator.clipboard) {
 			try {
-				await navigator.clipboard.writeText(window.location.href);
+				await navigator.clipboard.writeText(url);
 				copied = true;
 				clearTimeout(copyTimeout);
 				copyTimeout = setTimeout(() => {
 					copied = false;
 				}, 2000);
+				showToast('Link copied');
 			} catch {
-				// clipboard fallback
+				showToast('Could not copy link');
 			}
+		} else {
+			showToast('Could not copy link');
 		}
 	}
 

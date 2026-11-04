@@ -4,6 +4,7 @@
 	import CategoryIcon from '$lib/CategoryIcon.svelte';
 	import MallChat from '$lib/MallChat.svelte';
 	import { closet } from '$lib/closet.svelte';
+	import { presence } from '$lib/presence.svelte';
 	import { CATEGORIES, CATEGORY_LABEL, type Category, type ClosetPiece } from '$lib/pieces';
 	import {
 		mallFriends,
@@ -30,6 +31,8 @@
 
 	onMount(() => {
 		closet.init();
+		presence.connect();
+		presence.update(insideId);
 		// Friends wander the mall so the map feels alive.
 		wanderTimer = setInterval(() => {
 			friends = friends.map((f) =>
@@ -41,11 +44,20 @@
 		return () => {
 			clearInterval(wanderTimer);
 			clearTimeout(walkTimer);
+			presence.disconnect();
 		};
+	});
+
+	// Re-track presence on enter/leave (walk is tracked in walkToStore).
+	$effect(() => {
+		presence.update(insideId);
 	});
 
 	let inside = $derived(storeById(insideId));
 	let guests = $derived(insideId ? friendsHere(insideId) : []);
+	// Real visitors from Supabase Presence, excluding this tab.
+	let liveVisitors = $derived(presence.visitors.filter((v) => v.clientId !== presence.clientId));
+	let liveHere = $derived(insideId ? liveVisitors.filter((v) => v.storeId === insideId) : []);
 
 	let worn = $derived.by(() => {
 		const map: Partial<Record<Category, ClosetPiece | undefined>> = {};
@@ -68,9 +80,26 @@
 		};
 	}
 
+	function visitorSpot(storeId: string | null, index: number) {
+		if (storeId) {
+			const store = storeById(storeId);
+			if (store) {
+				// Offset past the simulated friend dots so rings never overlap them.
+				return {
+					x: store.x + store.w - 6 - (friendsHere(storeId).length + index) * 1.2,
+					y: store.y + 5
+				};
+			}
+		}
+		// Wandering the atrium concourse: deterministic spread from the index.
+		const spread = [0, 2.2, -2.2, 4.4, -4.4, 6.4, -6.4, 8.4, -8.4, 10.4];
+		return { x: 50 + (spread[index % spread.length] ?? 0), y: 31 };
+	}
+
 	function walkToStore(store: MallStore) {
 		clearTimeout(walkTimer);
 		you = storeCenter(store);
+		presence.update(null);
 		const reduced =
 			typeof window !== 'undefined' &&
 			typeof window.matchMedia === 'function' &&
@@ -171,6 +200,17 @@
 					</div>
 				{/each}
 
+				{#each liveVisitors as visitor, i (visitor.clientId)}
+					{@const vspot = visitorSpot(visitor.storeId, i)}
+					<div
+						class="pin visitor"
+						style={`left:${vspot.x}%;top:${vspot.y}%;--hue:${visitor.hue}`}
+						title={`${visitor.name} — here now`}
+					>
+						<span>{visitor.name.charAt(0)}</span>
+					</div>
+				{/each}
+
 				<div class="pin you" style={`left:${you.x}%;top:${you.y}%`} title="You">
 					<span>You</span>
 				</div>
@@ -181,7 +221,10 @@
 
 			<ul class="legend">
 				<li><span class="dot you-dot"></span> You</li>
-				<li><span class="dot friend-dot"></span> Friends exploring</li>
+				<li><span class="dot friend-dot"></span> Friends (demo)</li>
+				{#if presence.status === 'live'}
+					<li><span class="dot visitor-dot"></span> Here now: {liveVisitors.length}</li>
+				{/if}
 				<li>Tap a store to walk in and try on</li>
 			</ul>
 				</div>
@@ -200,6 +243,12 @@
 				<p class="guests">
 					{guests.map((g) => g.name).join(', ')}
 					{guests.length === 1 ? 'is' : 'are'} here too
+				</p>
+			{/if}
+			{#if presence.status === 'live' && liveHere.length}
+				<p class="guests live">
+					{liveHere.map((g) => g.name).join(', ')}
+					{liveHere.length === 1 ? 'is' : 'are'} shopping here now
 				</p>
 			{/if}
 		</header>
@@ -459,6 +508,14 @@
 		color: white;
 	}
 
+	/* Real visitors: light dot with a colored ring, distinct from solid friend dots. */
+	.pin.visitor span {
+		background: var(--t-surface);
+		color: hsl(var(--hue) 70% 32%);
+		border: 2px solid hsl(var(--hue) 70% 46%);
+		box-shadow: 0 0 0 3px color-mix(in srgb, hsl(var(--hue) 70% 46%) 28%, transparent);
+	}
+
 	.legend {
 		display: flex;
 		flex-wrap: wrap;
@@ -485,6 +542,12 @@
 
 	.friend-dot {
 		background: hsl(330 70% 46%);
+	}
+
+	.visitor-dot {
+		background: var(--t-surface);
+		border: 2px solid var(--t-accent);
+		box-sizing: border-box;
 	}
 
 	.store-bar {
