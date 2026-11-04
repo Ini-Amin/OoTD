@@ -130,6 +130,9 @@ func (c *Client) complete(model string, messages []chatMessage, maxTokens int) (
 }
 
 // AnalyzeOutfit runs Magic Tag on a public image URL.
+// Note: muse-spark models are reasoning models — they burn ~2k tokens on
+// chain-of-thought before emitting visible content (returned as null when
+// the budget runs out), so maxTokens must leave generous headroom.
 func (c *Client) AnalyzeOutfit(imgURL string) (string, error) {
 	msgs := []chatMessage{
 		textMsg("system", MagicTagSystemPrompt),
@@ -141,7 +144,7 @@ func (c *Client) AnalyzeOutfit(imgURL string) (string, error) {
 			},
 		},
 	}
-	return c.complete(c.visionModel, msgs, 1500)
+	return c.complete(c.visionModel, msgs, 4000)
 }
 
 // StylistReply runs one turn of the AI Stylist chat.
@@ -156,7 +159,7 @@ func (c *Client) StylistReply(history [][2]string, userText string) (string, err
 		msgs = append(msgs, textMsg(role, h[1]))
 	}
 	msgs = append(msgs, textMsg("user", userText))
-	return c.complete(c.chatModel, msgs, 800)
+	return c.complete(c.chatModel, msgs, 4000)
 }
 
 func truncate(s string, n int) string {
