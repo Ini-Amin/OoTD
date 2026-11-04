@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 
 	type User = {
@@ -28,6 +28,14 @@
 	let imageUrl = $state('');
 	let debouncedPreviewUrl = $state('');
 	let imageLoadError = $state(false);
+	// Local file picker state
+	let file = $state<File | null>(null);
+	let filePreviewUrl = $state('');
+	let fileError = $state<string | null>(null);
+	let dragOver = $state(false);
+	let fileInput = $state<HTMLInputElement | null>(null);
+	// Local file preview wins; falls back to the URL preview.
+	let effectivePreviewUrl = $derived(filePreviewUrl || debouncedPreviewUrl);
 	let submitting = $state(false);
 	let errorMessage = $state<string | null>(null);
 
@@ -63,6 +71,30 @@
 		};
 	});
 
+	function handleFiles(files: FileList | null) {
+		const f = files?.[0];
+		if (!f) return;
+		if (!f.type.startsWith('image/')) {
+			fileError = 'Please choose an image file.';
+			return;
+		}
+		fileError = null;
+		if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
+		file = f;
+		filePreviewUrl = URL.createObjectURL(f);
+	}
+
+	function clearFile() {
+		if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
+		file = null;
+		filePreviewUrl = '';
+		if (fileInput) fileInput.value = '';
+	}
+
+	onDestroy(() => {
+		if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
+	});
+
 	onMount(async () => {
 		try {
 			const res = await fetch(`${apiBase}/v1/users`);
@@ -74,7 +106,12 @@
 			users = data.users;
 			username = users[0].username;
 		} catch {
-			usersError = 'The API is unreachable.';
+			// Internal flag only — never shown to users; controls stay
+			// gracefully disabled instead.
+			usersError = 'unreachable';
+			if (import.meta.env.DEV) {
+				console.warn('[new] API unreachable — publish controls disabled');
+			}
 		}
 
 		// Probe: 400 on empty body means AI is configured; 503 means it is not.
@@ -203,8 +240,8 @@
 		<p class="eyebrow">Share your style</p>
 		<h1>Create an OoTD</h1>
 
-		{#if usersError}
-			<p class="error-region" role="alert">{usersError}</p>
+		{#if import.meta.env.DEV && usersError}
+			<p class="dev-note">dev: API unreachable — publish &amp; AI controls disabled</p>
 		{/if}
 
 		{#if errorMessage}
@@ -253,36 +290,88 @@
 				></textarea>
 			</div>
 			<div class="field">
-				<label for="image-url">
-					Photo URL <span class="hint">(optional)</span>
-				</label>
-				<input
-					id="image-url"
-					type="url"
-					name="imageUrl"
-					bind:value={imageUrl}
-					oninput={() => {
-						imageLoadError = false;
+				<span class="field-label" id="photo-label">
+					Photo <span class="hint">(optional)</span>
+				</span>
+				<div
+					class="dropzone"
+					class:dragging={dragOver}
+					role="button"
+					tabindex="0"
+					aria-labelledby="photo-label"
+					onclick={() => fileInput?.click()}
+					onkeydown={(e) => {
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							fileInput?.click();
+						}
 					}}
-					placeholder="https://..."
-					maxlength={500}
-					disabled={submitting}
-				/>
-				<span class="hint">Paste an https image link. Direct uploads are coming next.</span>
-				{#if debouncedPreviewUrl}
-					{#if imageLoadError}
-						<span class="hint image-error-hint">Could not load that image.</span>
+					ondragover={(e) => {
+						e.preventDefault();
+						dragOver = true;
+					}}
+					ondragleave={() => {
+						dragOver = false;
+					}}
+					ondrop={(e) => {
+						e.preventDefault();
+						dragOver = false;
+						handleFiles(e.dataTransfer?.files ?? null);
+					}}
+				>
+					<input
+						type="file"
+						accept="image/*"
+						hidden
+						tabindex={-1}
+						aria-hidden="true"
+						bind:this={fileInput}
+						onchange={(e) => handleFiles(e.currentTarget.files)}
+					/>
+					{#if effectivePreviewUrl}
+						{#if !filePreviewUrl && imageLoadError}
+							<span class="hint image-error-hint">Could not load that image.</span>
+						{:else}
+							<img
+								src={effectivePreviewUrl}
+								alt="Outfit preview"
+								class="preview-image"
+								onerror={() => {
+									if (!filePreviewUrl) imageLoadError = true;
+								}}
+							/>
+						{/if}
 					{:else}
-						<img
-							src={debouncedPreviewUrl}
-							alt="Outfit preview"
-							class="preview-image"
-							onerror={() => {
-								imageLoadError = true;
-							}}
-						/>
+						<p class="dropzone-prompt">
+							<span class="dropzone-icon" aria-hidden="true">📷</span>
+							Drag &amp; drop a photo here, or <span class="linklike">browse files</span>
+						</p>
 					{/if}
+				</div>
+				{#if fileError}
+					<span class="hint image-error-hint">{fileError}</span>
 				{/if}
+				{#if file}
+					<div class="file-row">
+						<span class="hint file-name">{file.name}</span>
+						<button type="button" class="text-button" onclick={clearFile}>Remove</button>
+					</div>
+				{/if}
+				<details class="url-fallback">
+					<summary>or paste an image URL</summary>
+					<input
+						id="image-url"
+						type="url"
+						name="imageUrl"
+						bind:value={imageUrl}
+						oninput={() => {
+							imageLoadError = false;
+						}}
+						placeholder="https://..."
+						maxlength={500}
+						disabled={submitting}
+					/>
+				</details>
 				{#if aiAvailable}
 					<button
 						type="button"
@@ -293,6 +382,9 @@
 					>
 						{magicLoading ? '✨ Analyzing…' : '✨ Magic Tag with AI'}
 					</button>
+					{#if !debouncedPreviewUrl && filePreviewUrl}
+						<span class="hint">Paste an image URL to use Magic Tag.</span>
+					{/if}
 					{#if magicError}
 						<span class="hint image-error-hint">{magicError}</span>
 					{/if}
@@ -472,6 +564,105 @@
 	.image-error-hint {
 		color: var(--t-accent);
 		margin-top: 0.25rem;
+	}
+
+	.field-label {
+		font-size: 0.88rem;
+		font-weight: 700;
+		color: var(--t-fg);
+	}
+
+	.dropzone {
+		border: 1.5px dashed var(--t-line);
+		border-radius: var(--t-radius);
+		background: var(--t-surface);
+		padding: 1.5rem 1rem;
+		text-align: center;
+		cursor: pointer;
+		transition:
+			border-color 0.15s ease,
+			background 0.15s ease;
+	}
+
+	.dropzone.dragging {
+		border-color: var(--t-fg);
+		background: var(--t-tint);
+	}
+
+	.dropzone:focus-visible {
+		outline: 2px solid var(--t-fg);
+		outline-offset: 1px;
+	}
+
+	.dropzone-prompt {
+		margin: 0;
+		color: var(--t-muted);
+		font-size: 0.9rem;
+	}
+
+	.dropzone-icon {
+		display: block;
+		font-size: 1.6rem;
+		margin-bottom: 0.4rem;
+	}
+
+	.linklike {
+		color: var(--t-fg);
+		font-weight: 700;
+		text-decoration: underline;
+	}
+
+	.dropzone .preview-image {
+		margin: 0 auto;
+	}
+
+	.file-row {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.file-name {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 70%;
+	}
+
+	.text-button {
+		border: 0;
+		background: none;
+		color: var(--t-fg);
+		font-size: 0.8rem;
+		font-weight: 700;
+		text-decoration: underline;
+		cursor: pointer;
+		padding: 0;
+	}
+
+	.url-fallback {
+		border: 1px solid var(--t-line);
+		border-radius: var(--t-radius);
+		padding: 0.6rem 0.9rem;
+		background: var(--t-surface);
+	}
+
+	.url-fallback summary {
+		cursor: pointer;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--t-muted);
+	}
+
+	.url-fallback[open] summary {
+		margin-bottom: 0.6rem;
+	}
+
+	.dev-note {
+		margin: 0 0 1.5rem;
+		font-size: 0.75rem;
+		font-family: ui-monospace, monospace;
+		color: var(--t-muted);
 	}
 
 	.magic-button {
