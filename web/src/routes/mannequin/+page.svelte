@@ -54,18 +54,40 @@
 		return `/?q=${encodeURIComponent(query.trim())}`;
 	});
 
+	/**
+	 * Which piece a craft request is about.
+	 *
+	 * This used to fall back to `closet.pieces[0]` — "whatever was added most
+	 * recently" — so a request made while wearing three pieces silently asked
+	 * about a fourth one the user was not looking at. A request form that
+	 * guesses its subject is worse than one that asks: it produces a plausible
+	 * order for the wrong garment. Now the subject is the last piece the user
+	 * actually touched, or the single worn piece, or nothing (and the form asks).
+	 */
+	let lastTouchedId = $state<string | null>(null);
+
 	let requestPiece = $derived.by(() => {
+		if (lastTouchedId) {
+			const hit = closet.pieces.find((p) => p.id === lastTouchedId);
+			if (hit) return hit;
+		}
 		const wornList = CATEGORIES
 			.map((c) => closet.wornPiece(c))
 			.filter((p): p is ClosetPiece => Boolean(p));
 		if (wornList.length === 1) {
 			return wornList[0];
 		}
-		if (closet.pieces.length > 0) {
-			return closet.pieces[0];
-		}
 		return undefined;
 	});
+
+	let requestLabel = $derived(
+		requestPiece ? `Request: ${requestPiece.label}` : 'Request a craftsman'
+	);
+
+	/** Categories with nothing saved — shown as one compact row, not six dashes. */
+	let emptyCategories = $derived(CATEGORIES.filter((c) => closet.byCategory(c).length === 0));
+	let filledCategories = $derived(CATEGORIES.filter((c) => closet.byCategory(c).length > 0));
+	let nothingWorn = $derived(CATEGORIES.every((c) => !closet.wornPiece(c)));
 
 	function openDialog(): void {
 		isDialogOpen = true;
@@ -98,17 +120,26 @@
 <main class="mannequin-page">
 	<section class="mannequin-col" aria-label="3D Mannequin">
 		<div class="mannequin-viewport">
-			<Mannequin3D {worn} height="72vh" />
+			<!-- Height comes from a CSS variable so the page can shrink the
+			     viewport on phones without the component knowing about
+			     breakpoints. At 72vh on a 390x844 screen the model ran under the
+			     fixed theme picker and the bottom nav. -->
+			<Mannequin3D {worn} height="var(--mannequin-h, 72vh)" />
+			{#if nothingWorn && !isClosetEmpty}
+				<p class="viewport-hint">Tap a piece on the right to dress the mannequin</p>
+			{/if}
 		</div>
-		<div class="mannequin-underbar">
-			<button
-				type="button"
-				class="clear-mannequin-button"
-				onclick={clearMannequin}
-			>
-				Clear mannequin
-			</button>
-		</div>
+		{#if !nothingWorn}
+			<div class="mannequin-underbar">
+				<button
+					type="button"
+					class="clear-mannequin-button"
+					onclick={clearMannequin}
+				>
+					Clear mannequin
+				</button>
+			</div>
+		{/if}
 	</section>
 
 	<section class="closet-col" aria-label="Your closet">
@@ -119,21 +150,26 @@
 				<p class="empty-title">Your closet is empty.</p>
 				<p class="empty-line">
 					Open any look and tap a piece icon (hat, top, shoes...) to save it here.
+					Saved pieces can be layered on the mannequin one at a time.
 				</p>
 				<a href="/" class="empty-link">Browse looks &rarr;</a>
 			</div>
+			<ol class="empty-steps">
+				<li><span class="step-n">1</span> Save a piece from any look</li>
+				<li><span class="step-n">2</span> Tap it here to put it on</li>
+				<li><span class="step-n">3</span> Request a custom version of what you see</li>
+			</ol>
 		{/if}
 
-		<div class="categories-list">
-			{#each CATEGORIES as cat (cat)}
-				<section class="category-section" aria-labelledby={`cat-${cat}`}>
-					<div class="category-header">
-						<CategoryIcon category={cat} size={16} />
-						<h2 id={`cat-${cat}`} class="category-name">{CATEGORY_LABEL[cat]}</h2>
-					</div>
-					{#if closet.byCategory(cat).length === 0}
-						<div class="category-dash" aria-label={`No ${CATEGORY_LABEL[cat].toLowerCase()} pieces`}>—</div>
-					{:else}
+		{#if !isClosetEmpty}
+			<div class="categories-list">
+				{#each filledCategories as cat (cat)}
+					<section class="category-section" aria-labelledby={`cat-${cat}`}>
+						<div class="category-header">
+							<CategoryIcon category={cat} size={16} />
+							<h2 id={`cat-${cat}`} class="category-name">{CATEGORY_LABEL[cat]}</h2>
+							<span class="category-count">{closet.byCategory(cat).length}</span>
+						</div>
 						<div class="category-grid">
 							{#each closet.byCategory(cat) as piece (piece.id)}
 								{@const isWorn = closet.worn[cat] === piece.id}
@@ -145,6 +181,7 @@
 										aria-pressed={isWorn}
 										aria-label={`${isWorn ? 'Take off' : 'Wear'} ${piece.label}`}
 										onclick={() => {
+											lastTouchedId = piece.id;
 											if (isWorn) {
 												closet.unwear(cat);
 											} else {
@@ -166,6 +203,7 @@
 										title={`Remove ${piece.label} from closet`}
 										onclick={(e) => {
 											e.stopPropagation();
+											if (lastTouchedId === piece.id) lastTouchedId = null;
 											closet.remove(piece.id);
 										}}
 									>
@@ -174,18 +212,31 @@
 								</div>
 							{/each}
 						</div>
-					{/if}
-				</section>
-			{/each}
-		</div>
+					</section>
+				{/each}
+			</div>
+
+			{#if emptyCategories.length > 0}
+				<div class="empty-slots">
+					<span class="empty-slots-label">Nothing saved yet</span>
+					{#each emptyCategories as cat (cat)}
+						<span class="slot-chip">
+							<CategoryIcon category={cat} size={12} />
+							{CATEGORY_LABEL[cat]}
+						</span>
+					{/each}
+				</div>
+			{/if}
+		{/if}
 
 		<div class="closet-actions">
 			<div class="actions-row">
 				<a
-					href={aiSearchHref}
+					href={isClosetEmpty ? undefined : aiSearchHref}
 					class="btn-action ai-link"
 					class:disabled={isClosetEmpty}
 					aria-disabled={isClosetEmpty}
+					tabindex={isClosetEmpty ? -1 : 0}
 				>
 					Find similar with AI
 				</a>
@@ -194,7 +245,7 @@
 					class="btn-action request-btn"
 					onclick={openDialog}
 				>
-					Request a craftsmaker
+					{requestLabel}
 				</button>
 			</div>
 			<p class="actions-hint">
@@ -223,20 +274,37 @@
 
 <style>
 	.mannequin-page {
+		--mannequin-h: 72vh;
 		width: min(1380px, calc(100% - 2.5rem));
 		margin: 0 auto;
 		padding: 2rem 0 4rem;
 		display: grid;
-		grid-template-columns: minmax(320px, 1fr) minmax(360px, 1.1fr);
+		/* The closet is capped at 30rem (see .closet-col), so a 1.1fr second
+		   column left ~200px of dead space at 1440px and pushed the two halves
+		   apart. Sizing the second track to the cap and centring the pair keeps
+		   the viewport and the closet visually adjacent at every width. */
+		grid-template-columns: minmax(320px, 1fr) minmax(360px, 30rem);
 		gap: 2.5rem;
 		align-items: start;
+		justify-content: center;
 	}
 
 	@media (max-width: 860px) {
 		.mannequin-page {
+			--mannequin-h: 54vh;
 			grid-template-columns: 1fr;
-			gap: 2rem;
-			padding: 1rem 0 3rem;
+			gap: 1.5rem;
+			/* The theme picker is fixed above the bottom nav, so the last row of
+			   the closet scrolls underneath it unless we reserve its height. */
+			padding: 1rem 0 7.5rem;
+		}
+	}
+
+	/* Landscape phones: 54vh of a 390px-tall viewport is unusably short, and
+	   72vh pushes the closet off-screen entirely. */
+	@media (max-width: 860px) and (max-height: 520px) {
+		.mannequin-page {
+			--mannequin-h: 78vh;
 		}
 	}
 
@@ -260,6 +328,26 @@
 		border-radius: var(--t-radius);
 		background: var(--t-tint);
 		overflow: hidden;
+		position: relative;
+	}
+
+	/* The mannequin is the point of the page, but an undressed one looks like a
+	   failed render. Say what to do, inside the frame, in the muted token. */
+	.viewport-hint {
+		position: absolute;
+		left: 50%;
+		transform: translateX(-50%);
+		top: 1rem;
+		margin: 0;
+		padding: 0.3rem 0.7rem;
+		white-space: nowrap;
+		border-radius: 999px;
+		background: var(--t-surface);
+		border: 1px solid var(--t-line);
+		font-size: 0.76rem;
+		color: var(--t-muted);
+		pointer-events: none;
+		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 	}
 
 	.mannequin-underbar {
@@ -289,6 +377,11 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1.5rem;
+		/* Without a cap the category rows stretch to the full column and the
+		   count/label drift hundreds of pixels apart, which reads as a table
+		   that lost its columns rather than as a list of garments. */
+		max-width: 30rem;
+		width: 100%;
 	}
 
 	.closet-title {
@@ -337,6 +430,37 @@
 		text-decoration: underline;
 	}
 
+	.empty-steps {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.55rem;
+	}
+
+	.empty-steps li {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		font-size: 0.85rem;
+		color: var(--t-muted);
+	}
+
+	.step-n {
+		flex: 0 0 auto;
+		width: 1.35rem;
+		height: 1.35rem;
+		border-radius: 50%;
+		border: 1px solid var(--t-line);
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 0.72rem;
+		font-weight: 600;
+		color: var(--t-fg);
+	}
+
 	.categories-list {
 		display: flex;
 		flex-direction: column;
@@ -371,11 +495,40 @@
 		color: var(--t-fg);
 	}
 
-	.category-dash {
+	.category-count {
+		font-size: 0.72rem;
+		font-variant-numeric: tabular-nums;
 		color: var(--t-muted);
-		font-size: 0.9rem;
-		padding-left: 0.25rem;
-		line-height: 1;
+		padding: 0.05rem 0.4rem;
+		border-radius: 999px;
+		background: var(--t-tint);
+	}
+
+	/* Six "—" rows for six empty categories was the loudest thing on the page
+	   while carrying zero information. One chip row does the same job quietly. */
+	.empty-slots {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.4rem;
+		padding-top: 0.25rem;
+	}
+
+	.empty-slots-label {
+		font-size: 0.75rem;
+		color: var(--t-muted);
+		margin-right: 0.15rem;
+	}
+
+	.slot-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		padding: 0.22rem 0.5rem;
+		border: 1px dashed var(--t-line);
+		border-radius: 999px;
+		font-size: 0.72rem;
+		color: var(--t-muted);
 	}
 
 	.category-grid {
