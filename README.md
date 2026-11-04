@@ -2,6 +2,17 @@
 
 A creator-first fashion discovery platform where people share outfits, discover styles, save inspiration, and optionally attach product or affiliate links.
 
+## Built during the Meta Global AI Developer Hackathon (Oct 27 – Nov 4, 2026)
+
+Two AI features powered by Meta's **Muse Spark** (Meta Model API, Baseten as fallback):
+
+- **✨ Magic Tag** — paste an outfit photo URL on `/new` and the AI auto-generates the title, caption, style tags, and per-piece bounding boxes. (`POST /v1/analyze`)
+- **💬 AI Stylist** — chat for outfit advice in Indonesian, with hijab and tropical-weather context. (`POST /v1/stylist`)
+
+Implementation: `api/internal/ai/`. Note: Muse Spark is a reasoning model — it spends ~1900 tokens on chain-of-thought, so `max_tokens` is set to 4000 in `api/internal/ai/client.go`.
+
+**3D Mannequin + Closet** (`/mannequin`, built before the hackathon): a rotatable Three.js dress-form figure. Save garment pieces from any outfit into your closet, tap to try them on the mannequin (photo-textured 3D garments), then find similar looks or request a craftsman.
+
 This repository is being built as a learning project. The first milestone is intentionally small: a SvelteKit feed UI and a Go API that returns sample outfit data.
 
 ## Repository layout
