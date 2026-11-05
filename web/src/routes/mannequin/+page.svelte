@@ -54,6 +54,10 @@
 
 	onMount(() => {
 		closet.init();
+		// Deep link from mall Makers chat: open the craft request form directly.
+		if (new URLSearchParams(window.location.search).get('craft') === '1') {
+			openDialog();
+		}
 	});
 
 	let worn = $derived.by(() => {

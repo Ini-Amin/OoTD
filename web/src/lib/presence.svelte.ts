@@ -37,6 +37,11 @@ function displayName(): string {
 	return guestName;
 }
 
+/** This tab's chat identity, shared by presence roster and mall chat. */
+export function myDisplayName(): string {
+	return displayName();
+}
+
 function isValidStoreId(storeId: unknown): storeId is string | null {
 	return storeId === null || (typeof storeId === 'string' && storeId.length <= 64);
 }

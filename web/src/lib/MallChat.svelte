@@ -1,86 +1,256 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { mallChat } from '$lib/mallChat.svelte';
+	import { presence } from '$lib/presence.svelte';
+	import { storeById } from '$lib/mall';
 
+	/** Overlay mode floats inside the 3D stage; docked mode fills its parent. */
+	let { overlay = false }: { overlay?: boolean } = $props();
+
+	type Tab = 'mall' | 'whisper' | 'makers';
+	let tab = $state<Tab>('mall');
+	let peerId = $state<string | null>(null);
+	let collapsed = $state(false);
 	let input = $state('');
 	let sending = $state(false);
 	let boxEl = $state<HTMLDivElement | null>(null);
 
+	const makers = storeById('makers');
+	let visitors = $derived(presence.visitors.filter((v) => v.clientId !== presence.clientId));
+	let threadIds = $derived(Object.keys(mallChat.whispers));
+	let unreadTotal = $derived(mallChat.unreadTotal());
+	let thread = $derived(peerId ? (mallChat.whispers[peerId] ?? []) : []);
+	let peerName = $derived(peerId ? mallChat.threadName(peerId) : '');
+
 	onMount(() => {
 		mallChat.connect();
+		if (overlay && window.innerWidth < 860) collapsed = true;
 		return () => {
 			mallChat.disconnect();
 		};
 	});
 
 	$effect(() => {
-		const n = mallChat.messages.length;
+		const n = mallChat.messages.length + thread.length;
 		if (boxEl && n >= 0) {
 			boxEl.scrollTop = boxEl.scrollHeight;
 		}
 	});
 
+	// Viewing a conversation clears its unread badge.
+	$effect(() => {
+		const u = mallChat.unread;
+		if (overlay && collapsed) return;
+		if (tab === 'mall' && u['mall']) mallChat.markRead('mall');
+		if (tab === 'whisper' && peerId && u[peerId]) mallChat.markRead(peerId);
+	});
+
+	function lastPreview(id: string): string {
+		const t = mallChat.whispers[id] ?? [];
+		const last = t[t.length - 1];
+		if (!last) return '';
+		return last.mine ? `You: ${last.text}` : last.text;
+	}
+
+	function openChat() {
+		collapsed = false;
+	}
+
+	function pickPeer(id: string) {
+		peerId = id;
+		input = '';
+	}
+
 	async function send() {
 		const text = input.trim();
 		if (!text || sending || mallChat.status !== 'live') return;
+		if (tab === 'whisper' && !peerId) return;
 		sending = true;
 		input = '';
-		await mallChat.send(text);
+		if (tab === 'whisper' && peerId) {
+			await mallChat.sendWhisper(peerId, peerName, text);
+		} else {
+			await mallChat.send(text);
+		}
 		sending = false;
+	}
+
+	function storeLabel(storeId: string | null): string {
+		if (!storeId) return 'in the mall';
+		return `in ${storeById(storeId)?.name ?? 'a store'}`;
 	}
 </script>
 
-<section class="chat-card" aria-label="Mall chat">
-	<header class="chat-head">
-		<div>
-			<h2>Mall chat</h2>
-			<p class="chat-sub">
-				{#if mallChat.status === 'live'}
-					<span class="live-dot" aria-hidden="true"></span> Live — say hi to friends in the mall
-				{:else if mallChat.status === 'connecting'}
-					Connecting…
-				{:else}
-					Chat unavailable right now
+{#if overlay && collapsed}
+	<button type="button" class="chat-fab" onclick={openChat} aria-label="Open mall chat">
+		Chat
+		{#if unreadTotal > 0}
+			<span class="fab-badge" aria-label="{unreadTotal} unread">{unreadTotal}</span>
+		{/if}
+	</button>
+{:else}
+	<section class="chat-card" class:overlay aria-label="Mall chat">
+		<header class="chat-head">
+			<div class="tabs" role="tablist" aria-label="Chat channels">
+				<button
+					type="button"
+					role="tab"
+					aria-selected={tab === 'mall'}
+					class:on={tab === 'mall'}
+					onclick={() => (tab = 'mall')}
+				>
+					Mall
+					{#if (mallChat.unread['mall'] ?? 0) > 0}
+						<span class="tab-badge">{mallChat.unread['mall']}</span>
+					{/if}
+				</button>
+				<button
+					type="button"
+					role="tab"
+					aria-selected={tab === 'whisper'}
+					class:on={tab === 'whisper'}
+					onclick={() => (tab = 'whisper')}
+				>
+					Whisper
+					{#if threadIds.some((id) => (mallChat.unread[id] ?? 0) > 0)}
+						<span class="tab-badge">•</span>
+					{/if}
+				</button>
+				<button
+					type="button"
+					role="tab"
+					aria-selected={tab === 'makers'}
+					class:on={tab === 'makers'}
+					onclick={() => (tab = 'makers')}
+				>
+					Makers
+				</button>
+			</div>
+			<div class="head-right">
+				<span class="status" aria-live="polite">
+					{#if mallChat.status === 'live'}
+						<span class="live-dot" aria-hidden="true"></span> Live
+					{:else if mallChat.status === 'connecting'}
+						Connecting…
+					{:else}
+						Offline
+					{/if}
+				</span>
+				{#if overlay}
+					<button type="button" class="icon-btn" onclick={() => (collapsed = true)} aria-label="Minimize chat">
+						—
+					</button>
 				{/if}
-			</p>
-		</div>
-		{#if mallChat.status === 'offline'}
-			<button type="button" class="retry-btn" onclick={() => mallChat.connect()}>Retry</button>
-		{/if}
-	</header>
+			</div>
+		</header>
 
-	<div class="chat-box" bind:this={boxEl} role="log" aria-live="polite" aria-label="Messages">
-		{#if mallChat.messages.length === 0}
-			<p class="chat-empty">No messages yet. Be the first to say hi.</p>
+		{#if tab === 'mall'}
+			<div class="chat-box" bind:this={boxEl} role="log" aria-live="polite" aria-label="Mall messages">
+				{#if mallChat.messages.length === 0}
+					<p class="chat-empty">No messages yet. Be the first to say hi.</p>
+				{/if}
+				{#each mallChat.messages as m (m.id)}
+					<p class="chat-msg" class:mine={m.mine}>
+						{#if !m.mine}<strong>{m.name}</strong>{/if}
+						<span>{m.text}</span>
+					</p>
+				{/each}
+			</div>
+			<form
+				class="chat-form"
+				onsubmit={(e) => {
+					e.preventDefault();
+					send();
+				}}
+			>
+				<input
+					type="text"
+					bind:value={input}
+					maxlength={500}
+					placeholder={mallChat.status === 'live' ? 'Message the mall…' : 'Waiting for connection…'}
+					aria-label="Message the mall"
+					disabled={sending || mallChat.status !== 'live'}
+				/>
+				<button type="submit" disabled={sending || !input.trim() || mallChat.status !== 'live'}>
+					Send
+				</button>
+			</form>
+		{:else if tab === 'whisper'}
+			{#if !peerId}
+				<div class="chat-box" aria-label="Visitors">
+					{#if visitors.length === 0 && threadIds.length === 0}
+						<p class="chat-empty">Nobody else is here yet. Open this page in a second tab to try whispering.</p>
+					{/if}
+					{#each threadIds as id (id)}
+						<button type="button" class="peer-row" onclick={() => pickPeer(id)}>
+							<span class="peer-name">{mallChat.threadName(id)}</span>
+							<span class="peer-sub">{lastPreview(id)}</span>
+							{#if (mallChat.unread[id] ?? 0) > 0}
+								<span class="tab-badge">{mallChat.unread[id]}</span>
+							{/if}
+						</button>
+					{/each}
+					{#each visitors.filter((v) => !threadIds.includes(v.clientId)) as v (v.clientId)}
+						<button type="button" class="peer-row" onclick={() => pickPeer(v.clientId)}>
+							<span class="peer-name">{v.name}</span>
+							<span class="peer-sub">{storeLabel(v.storeId)}</span>
+						</button>
+					{/each}
+				</div>
+			{:else}
+				<div class="thread-bar">
+					<button type="button" class="icon-btn" onclick={() => (peerId = null)} aria-label="Back to visitors">
+						←
+					</button>
+					<strong>{peerName}</strong>
+				</div>
+				<div class="chat-box" bind:this={boxEl} role="log" aria-live="polite" aria-label="Whisper thread">
+					{#if thread.length === 0}
+						<p class="chat-empty">Say hi to {peerName}. Only the two of you see this.</p>
+					{/if}
+					{#each thread as m (m.id)}
+						<p class="chat-msg" class:mine={m.mine}>
+							<span>{m.text}</span>
+						</p>
+					{/each}
+				</div>
+				<form
+					class="chat-form"
+					onsubmit={(e) => {
+						e.preventDefault();
+						send();
+					}}
+				>
+					<input
+						type="text"
+						bind:value={input}
+						maxlength={500}
+						placeholder={mallChat.status === 'live' ? `Whisper to ${peerName}…` : 'Waiting for connection…'}
+						aria-label="Whisper message"
+						disabled={sending || mallChat.status !== 'live'}
+					/>
+					<button type="submit" disabled={sending || !input.trim() || mallChat.status !== 'live'}>
+						Send
+					</button>
+				</form>
+			{/if}
+		{:else}
+			<div class="chat-box" aria-label="Makers">
+				{#if makers}
+					<p class="maker-name">{makers.name}</p>
+					<p class="maker-blurb">{makers.blurb}</p>
+					<p class="maker-note">
+						Makers are not online here yet. Send a craft request and they will see it once
+						marketplace accounts open.
+					</p>
+					<a class="maker-cta" href="/mannequin?craft=1">Request a craft</a>
+				{:else}
+					<p class="chat-empty">No makers listed yet.</p>
+				{/if}
+			</div>
 		{/if}
-		{#each mallChat.messages as m (m.id)}
-			<p class="chat-msg" class:mine={m.mine}>
-				{#if !m.mine}<strong>{m.name}</strong>{/if}
-				<span>{m.text}</span>
-			</p>
-		{/each}
-	</div>
-
-	<form
-		class="chat-form"
-		onsubmit={(e) => {
-			e.preventDefault();
-			send();
-		}}
-	>
-		<input
-			type="text"
-			bind:value={input}
-			maxlength={500}
-			placeholder={mallChat.status === 'live' ? 'Message the mall…' : 'Waiting for connection…'}
-			aria-label="Message the mall"
-			disabled={sending || mallChat.status !== 'live'}
-		/>
-		<button type="submit" disabled={sending || !input.trim() || mallChat.status !== 'live'}>
-			Send
-		</button>
-	</form>
-</section>
+	</section>
+{/if}
 
 <style>
 	.chat-card {
@@ -93,27 +263,109 @@
 		overflow: hidden;
 	}
 
+	.chat-card.overlay {
+		position: absolute;
+		right: 0.75rem;
+		bottom: 0.75rem;
+		z-index: 7;
+		width: min(21rem, calc(100% - 1.5rem));
+		max-height: calc(100% - 1.5rem);
+		box-shadow: 0 0.75rem 2rem rgba(20, 16, 10, 0.28);
+	}
+
+	.chat-fab {
+		position: absolute;
+		right: 0.75rem;
+		bottom: 0.75rem;
+		z-index: 7;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		min-height: 44px;
+		border: 1px solid var(--t-line);
+		border-radius: 999px;
+		background: var(--t-surface);
+		color: var(--t-fg);
+		font-weight: 700;
+		font-size: 0.85rem;
+		padding: 0.55rem 1rem;
+		box-shadow: 0 0.5rem 1.25rem rgba(20, 16, 10, 0.25);
+	}
+
+	.fab-badge {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 1.4rem;
+		height: 1.4rem;
+		border-radius: 999px;
+		background: var(--t-accent);
+		color: #fff;
+		font-size: 0.72rem;
+		padding: 0 0.3rem;
+	}
+
 	.chat-head {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 0.75rem;
-		padding: 0.85rem 1rem;
+		gap: 0.5rem;
+		padding: 0.5rem 0.6rem;
 		border-bottom: 1px solid var(--t-line);
 	}
 
-	.chat-head h2 {
-		margin: 0;
-		font-size: 1rem;
+	.tabs {
+		display: flex;
+		gap: 0.25rem;
+		min-width: 0;
 	}
 
-	.chat-sub {
-		margin: 0.15rem 0 0;
-		font-size: 0.78rem;
+	.tabs button {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		min-height: 44px;
+		border: 0;
+		border-radius: 0.6rem;
+		background: transparent;
 		color: var(--t-muted);
+		font-size: 0.82rem;
+		font-weight: 700;
+		padding: 0.4rem 0.6rem;
+	}
+
+	.tabs button.on {
+		background: var(--t-tint);
+		color: var(--t-fg);
+	}
+
+	.tab-badge {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 1.25rem;
+		height: 1.25rem;
+		border-radius: 999px;
+		background: var(--t-accent);
+		color: #fff;
+		font-size: 0.68rem;
+		padding: 0 0.25rem;
+	}
+
+	.head-right {
 		display: flex;
 		align-items: center;
-		gap: 0.35rem;
+		gap: 0.45rem;
+		flex-shrink: 0;
+	}
+
+	.status {
+		font-size: 0.72rem;
+		color: var(--t-muted);
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		white-space: nowrap;
 	}
 
 	.live-dot {
@@ -124,25 +376,42 @@
 		display: inline-block;
 	}
 
-	.retry-btn {
+	.icon-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 44px;
+		min-height: 44px;
 		border: 1px solid var(--t-line);
 		background: transparent;
 		color: var(--t-fg);
-		border-radius: 999px;
-		padding: 0.35rem 0.8rem;
-		font-size: 0.78rem;
-		flex-shrink: 0;
+		border-radius: 0.6rem;
+		font-size: 0.9rem;
+	}
+
+	.thread-bar {
+		display: flex;
+		align-items: center;
+		gap: 0.55rem;
+		padding: 0.4rem 0.6rem;
+		border-bottom: 1px solid var(--t-line);
+		font-size: 0.85rem;
 	}
 
 	.chat-box {
 		flex: 1;
-		min-height: 12rem;
-		max-height: 26rem;
+		min-height: 10rem;
+		max-height: 24rem;
 		overflow-y: auto;
 		padding: 0.9rem 1rem;
 		display: flex;
 		flex-direction: column;
 		gap: 0.45rem;
+	}
+
+	.chat-card.overlay .chat-box {
+		min-height: 8rem;
+		max-height: 40vh;
 	}
 
 	.chat-empty {
@@ -180,6 +449,68 @@
 		border-color: var(--t-fg);
 	}
 
+	.peer-row {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		min-height: 44px;
+		width: 100%;
+		text-align: left;
+		border: 1px solid var(--t-line);
+		border-radius: 0.75rem;
+		background: var(--t-bg);
+		color: var(--t-fg);
+		padding: 0.55rem 0.7rem;
+	}
+
+	.peer-name {
+		font-weight: 700;
+		font-size: 0.85rem;
+	}
+
+	.peer-sub {
+		margin-left: auto;
+		font-size: 0.72rem;
+		color: var(--t-muted);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.maker-name {
+		margin: 0;
+		font-weight: 700;
+		font-size: 0.95rem;
+	}
+
+	.maker-blurb {
+		margin: 0;
+		font-size: 0.83rem;
+		color: var(--t-muted);
+		line-height: 1.45;
+	}
+
+	.maker-note {
+		margin: 0;
+		font-size: 0.8rem;
+		line-height: 1.45;
+	}
+
+	.maker-cta {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 44px;
+		border-radius: 999px;
+		background: var(--t-fg);
+		color: var(--t-bg);
+		font-weight: 700;
+		font-size: 0.83rem;
+		text-decoration: none;
+		padding: 0.55rem 1rem;
+		align-self: flex-start;
+	}
+
 	.chat-form {
 		display: flex;
 		gap: 0.5rem;
@@ -190,6 +521,7 @@
 	.chat-form input {
 		flex: 1;
 		min-width: 0;
+		min-height: 44px;
 		padding: 0.6rem 0.8rem;
 		border: 1px solid var(--t-line);
 		border-radius: 999px;
@@ -206,6 +538,7 @@
 		font-weight: 700;
 		font-size: 0.82rem;
 		padding: 0.6rem 1rem;
+		min-height: 44px;
 	}
 
 	.chat-form button:disabled {

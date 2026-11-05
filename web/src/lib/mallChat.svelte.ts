@@ -1,5 +1,5 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import { auth } from './auth.svelte';
+import { myDisplayName, presence } from './presence.svelte';
 import { getSupabase } from './supabase';
 
 export type MallChatMessage = {
@@ -10,24 +10,22 @@ export type MallChatMessage = {
 	at: number;
 };
 
+export type WhisperMessage = MallChatMessage & { peerId: string };
+
 export type MallChatStatus = 'connecting' | 'live' | 'offline';
 
 const CHANNEL = 'mall-lobby';
 const MAX_MESSAGES = 100;
 const MAX_LEN = 500;
 
-// Stable per-session guest name for logged-out chatters.
-let guestName = '';
-
-function displayName(): string {
-	const p = auth.profile;
-	if (p) return p.displayName?.trim() || `@${p.username}`;
-	if (!guestName) guestName = `Guest-${Math.floor(1000 + Math.random() * 9000)}`;
-	return guestName;
-}
-
 class MallChatStore {
 	messages = $state<MallChatMessage[]>([]);
+	/** 1:1 threads keyed by peer clientId. */
+	whispers = $state<Record<string, WhisperMessage[]>>({});
+	/** Latest known display name per peer clientId. */
+	whisperNames = $state<Record<string, string>>({});
+	/** Unread counts: 'mall' plus one per peer clientId. */
+	unread = $state<Record<string, number>>({});
 	status = $state<MallChatStatus>('connecting');
 	#channel: RealtimeChannel | null = null;
 	#seen = new Set<string>();
@@ -59,6 +57,47 @@ class MallChatStore {
 					...this.messages.slice(-(MAX_MESSAGES - 1)),
 					{ id: p.id, name: p.name.slice(0, 40), text: p.text.slice(0, MAX_LEN), mine: false, at: Date.now() }
 				];
+				this.unread = { ...this.unread, mall: (this.unread['mall'] ?? 0) + 1 };
+			})
+			.on('broadcast', { event: 'whisper' }, ({ payload }) => {
+				const p = payload as {
+					id?: unknown;
+					from?: unknown;
+					fromName?: unknown;
+					to?: unknown;
+					text?: unknown;
+				};
+				if (
+					typeof p.id !== 'string' ||
+					typeof p.from !== 'string' ||
+					typeof p.fromName !== 'string' ||
+					typeof p.to !== 'string' ||
+					typeof p.text !== 'string' ||
+					!p.text.trim() ||
+					p.to !== presence.clientId ||
+					this.#seen.has(p.id)
+				) {
+					return;
+				}
+				this.#seen.add(p.id);
+				const peerId = p.from;
+				this.whisperNames = { ...this.whisperNames, [peerId]: p.fromName.slice(0, 40) };
+				const thread = this.whispers[peerId] ?? [];
+				this.whispers = {
+					...this.whispers,
+					[peerId]: [
+						...thread.slice(-(MAX_MESSAGES - 1)),
+						{
+							id: p.id,
+							name: p.fromName.slice(0, 40),
+							text: p.text.slice(0, MAX_LEN),
+							mine: false,
+							at: Date.now(),
+							peerId
+						}
+					]
+				};
+				this.unread = { ...this.unread, [peerId]: (this.unread[peerId] ?? 0) + 1 };
 			})
 			.subscribe((subStatus) => {
 				this.status = subStatus === 'SUBSCRIBED' ? 'live' : subStatus === 'CLOSED' || subStatus === 'CHANNEL_ERROR' ? 'offline' : 'connecting';
@@ -72,17 +111,59 @@ class MallChatStore {
 		}
 	}
 
+	markRead(key: string): void {
+		if (!this.unread[key]) return;
+		const next = { ...this.unread };
+		delete next[key];
+		this.unread = next;
+	}
+
+	/** Total unread across mall chat and every whisper thread. */
+	unreadTotal(): number {
+		return Object.values(this.unread).reduce((a, b) => a + b, 0);
+	}
+
+	/** Display name for a whisper thread (live roster name wins, else last seen). */
+	threadName(peerId: string): string {
+		const live = presence.visitors.find((v) => v.clientId === peerId);
+		if (live) return live.name;
+		return this.whisperNames[peerId] ?? 'Visitor';
+	}
+
 	async send(raw: string): Promise<boolean> {
 		const text = raw.trim().slice(0, MAX_LEN);
 		if (!text || !this.#channel || this.status !== 'live') return false;
 		const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-		const name = displayName();
+		const name = myDisplayName();
 		this.#seen.add(id);
 		this.messages = [
 			...this.messages.slice(-(MAX_MESSAGES - 1)),
 			{ id, name, text, mine: true, at: Date.now() }
 		];
 		const res = await this.#channel.send({ type: 'broadcast', event: 'msg', payload: { id, name, text } });
+		return res === 'ok';
+	}
+
+	async sendWhisper(peerId: string, peerName: string, raw: string): Promise<boolean> {
+		const text = raw.trim().slice(0, MAX_LEN);
+		if (!text || !peerId || !this.#channel || this.status !== 'live') return false;
+		const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+		const name = myDisplayName();
+		this.#seen.add(id);
+		this.whisperNames = { ...this.whisperNames, [peerId]: peerName.slice(0, 40) };
+		const thread = this.whispers[peerId] ?? [];
+		this.whispers = {
+			...this.whispers,
+			[peerId]: [
+				...thread.slice(-(MAX_MESSAGES - 1)),
+				{ id, name, text, mine: true, at: Date.now(), peerId }
+			]
+		};
+		const res = await this.#channel.send({
+			type: 'broadcast',
+			event: 'whisper',
+			payload: { id, from: presence.clientId, fromName: name, to: peerId, text }
+		});
 		return res === 'ok';
 	}
 }

@@ -271,7 +271,7 @@
 		const group = new THREE.Group();
 		const brand = new THREE.Color(store.color);
 		const body = new THREE.Mesh(
-			track(new THREE.BoxGeometry(w, 4.2, d)),
+			track(new THREE.BoxGeometry(w, 3, d)),
 			track(
 				new THREE.MeshStandardMaterial({
 					color: brand.clone().lerp(new THREE.Color('#ffffff'), 0.84),
@@ -279,7 +279,7 @@
 				})
 			)
 		);
-		body.position.set(box.centerX, 2.1, box.centerZ);
+		body.position.set(box.centerX, 1.5, box.centerZ);
 		body.castShadow = true;
 		body.receiveShadow = true;
 		group.add(body);
@@ -290,7 +290,7 @@
 			track(new THREE.BoxGeometry(w - 0.3, 0.35, d - 0.3)),
 			track(new THREE.MeshStandardMaterial({ color: '#7d7468', roughness: 0.85 }))
 		);
-		roof.position.set(box.centerX, 4.2 + 0.17, box.centerZ);
+		roof.position.set(box.centerX, 3 + 0.17, box.centerZ);
 		roof.castShadow = true;
 		group.add(roof);
 
@@ -299,14 +299,14 @@
 		const out = south ? 1 : -1;
 		const rotY = south ? 0 : Math.PI;
 		const glow = new THREE.Mesh(
-			track(new THREE.PlaneGeometry(w * 0.72, 2.5)),
+			track(new THREE.PlaneGeometry(w * 0.72, 1.8)),
 			track(new THREE.MeshBasicMaterial({ color: '#ffedd2' }))
 		);
-		glow.position.set(box.centerX, 1.5, faceZ + out * 0.12);
+		glow.position.set(box.centerX, 1, faceZ + out * 0.12);
 		glow.rotation.y = rotY;
 		group.add(glow);
 		const glass = new THREE.Mesh(
-			track(new THREE.PlaneGeometry(w * 0.72, 2.5)),
+			track(new THREE.PlaneGeometry(w * 0.72, 1.8)),
 			track(
 				new THREE.MeshStandardMaterial({
 					color: '#b9cfdd',
@@ -317,17 +317,17 @@
 				})
 			)
 		);
-		glass.position.set(box.centerX, 1.5, faceZ + out * 0.2);
+		glass.position.set(box.centerX, 1, faceZ + out * 0.2);
 		glass.rotation.y = rotY;
 		group.add(glass);
 		const mullMat = track(new THREE.MeshStandardMaterial({ color: '#2c2c30', roughness: 0.6 }));
 		for (const t of [-0.25, 0, 0.25]) {
-			const mull = new THREE.Mesh(track(new THREE.BoxGeometry(0.12, 2.5, 0.12)), mullMat);
-			mull.position.set(box.centerX + t * w, 1.5, faceZ + out * 0.22);
+			const mull = new THREE.Mesh(track(new THREE.BoxGeometry(0.12, 1.8, 0.12)), mullMat);
+			mull.position.set(box.centerX + t * w, 1, faceZ + out * 0.22);
 			group.add(mull);
 		}
 		const door = new THREE.Mesh(
-			track(new THREE.PlaneGeometry(1.8, 2.6)),
+			track(new THREE.PlaneGeometry(1.8, 2)),
 			track(
 				new THREE.MeshStandardMaterial({
 					color: brand.clone().multiplyScalar(0.35),
@@ -335,17 +335,17 @@
 				})
 			)
 		);
-		door.position.set(box.doorX, 1.45, faceZ + out * 0.26);
+		door.position.set(box.doorX, 1.05, faceZ + out * 0.26);
 		door.rotation.y = rotY;
 		group.add(door);
 		const fascia = new THREE.Mesh(
-			track(new THREE.BoxGeometry(w * 0.86, 1.2, 0.12)),
+			track(new THREE.BoxGeometry(w * 0.86, 0.9, 0.12)),
 			track(new THREE.MeshStandardMaterial({ color: brand, roughness: 0.7 }))
 		);
-		fascia.position.set(box.centerX, 3.55, faceZ + out * 0.18);
+		fascia.position.set(box.centerX, 2.5, faceZ + out * 0.18);
 		group.add(fascia);
 		const sign = new THREE.Mesh(
-			track(new THREE.PlaneGeometry(Math.min(w * 0.8, 7), 1.05)),
+			track(new THREE.PlaneGeometry(Math.min(w * 0.8, 7), 0.8)),
 			track(
 				new THREE.MeshBasicMaterial({
 					map: makeSignTexture(store.name, store.color, `${store.skus.length} pieces`),
@@ -353,7 +353,7 @@
 				})
 			)
 		);
-		sign.position.set(box.centerX, 3.55, faceZ + out * 0.26);
+		sign.position.set(box.centerX, 2.5, faceZ + out * 0.26);
 		sign.rotation.y = rotY;
 		group.add(sign);
 		const pad = new THREE.Mesh(
@@ -825,7 +825,7 @@
 		const boomLen = desiredCameraPos(_camTarget);
 		const showPlayer = boomLen > 2.2;
 		if (avatar) avatar.visible = showPlayer;
-		if (playerCapsule) playerCapsule.visible = avatar ? showPlayer : true;
+		if (playerCapsule) playerCapsule.visible = avatar ? false : showPlayer;
 		if (reducedMotion) {
 			camera.position.copy(_camTarget);
 		} else {

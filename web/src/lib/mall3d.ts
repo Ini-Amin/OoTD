@@ -88,7 +88,7 @@ export const FOUNTAIN_R = 2.3;
 /** Directory totems (thin poles; verified clear of doors and spawn). */
 export const TOTEM_SPOTS: PropSpot[] = [
 	{ x: -3, z: 10.5, r: 0.3 },
-	{ x: 3.5, z: -8, r: 0.3 }
+	{ x: -3.5, z: -8, r: 0.3 }
 ];
 
 export function buildColliders(): Collider[] {

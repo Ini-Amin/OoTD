@@ -259,8 +259,8 @@ export const mallFriends: MallFriend[] = [
 	{ id: 'salsa', name: 'Salsa', storeId: 'buttonscarves', note: 'Wedding guest look', hue: 32 }
 ];
 
-/** 3D spawn: mid-plaza facing the atrium fountain and the north storefronts. */
-export const mallYouStart = { x: 50, y: 47 };
+/** 3D spawn: north atrium before Uniqlo, camera boom south over open floor. */
+export const mallYouStart = { x: 54.7, y: 27.5 };
 
 export function storeById(id: string | null | undefined): MallStore | undefined {
 	if (!id) return undefined;

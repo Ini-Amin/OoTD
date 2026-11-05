@@ -120,29 +120,25 @@
 		</header>
 
 		<div class="map-shell">
-			<div class="map-grid">
-				<div class="map-col">
-				<div class="stage3d" role="application" aria-label="Walkable 3D mall">
-					<Mall3D
-						{friends}
-						visitors={liveVisitors}
-						startPos={lastPos}
-						onEnter={enterStore}
-						onMove={handlePlayerMove}
-					/>
-				</div>
+			<div class="stage3d" role="application" aria-label="Walkable 3D mall">
+				<Mall3D
+					{friends}
+					visitors={liveVisitors}
+					startPos={lastPos}
+					onEnter={enterStore}
+					onMove={handlePlayerMove}
+				/>
+				<MallChat overlay />
+			</div>
 
-				<ul class="legend">
-					<li><span class="dot you-dot"></span> You</li>
-					<li><span class="dot friend-dot"></span> Friends (demo)</li>
-					{#if presence.status === 'live'}
-						<li><span class="dot visitor-dot"></span> Here now: {liveVisitors.length}</li>
-					{/if}
-					<li>Walk to a glowing door pad to enter a store</li>
-				</ul>
-			</div>
-				<MallChat />
-			</div>
+			<ul class="legend">
+				<li><span class="dot you-dot"></span> You</li>
+				<li><span class="dot friend-dot"></span> Friends (demo)</li>
+				{#if presence.status === 'live'}
+					<li><span class="dot visitor-dot"></span> Here now: {liveVisitors.length}</li>
+				{/if}
+				<li>Walk to a glowing door pad to enter a store</li>
+			</ul>
 		</div>
 	{:else}
 		<header class="store-bar">
@@ -270,17 +266,6 @@
 
 	.map-shell {
 		margin-top: 1.25rem;
-	}
-
-	.map-grid {
-		display: grid;
-		grid-template-columns: minmax(0, 1.65fr) minmax(17rem, 1fr);
-		gap: 1rem;
-		align-items: start;
-	}
-
-	.map-col {
-		min-width: 0;
 	}
 
 	.store-chat {
@@ -479,10 +464,6 @@
 		}
 
 		.store-layout {
-			grid-template-columns: 1fr;
-		}
-
-		.map-grid {
 			grid-template-columns: 1fr;
 		}
 
