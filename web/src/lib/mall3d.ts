@@ -161,6 +161,22 @@ export function nearestDoor(pos: Vec2, trigger = 2.4): DoorHit | null {
 	return best;
 }
 
+/** Minimap edge in CSS px (square SVG overlay in Mall3D.svelte). */
+export const MINIMAP_SIZE = 150;
+
+/**
+ * World meters → minimap pixels. Pure inverse of the world layout:
+ * [-WORLD_HALF, +WORLD_HALF] maps to [0, size] on both axes.
+ */
+export function worldToMap(x: number, z: number, size = MINIMAP_SIZE): { px: number; py: number } {
+	const span = WORLD_HALF * 2;
+	const clamp = (v: number): number => Math.max(0, Math.min(size, v));
+	return {
+		px: clamp(((x + WORLD_HALF) / span) * size),
+		py: clamp(((z + WORLD_HALF) / span) * size)
+	};
+}
+
 /** Deterministic atrium spot for visitors with no position (ring by index). */
 export function atriumSpot(index: number): Vec2 {
 	const ring = Math.floor(index / 8);

@@ -11,7 +11,11 @@ import {
 	spawnPoint,
 	storeBoxes,
 	storeBoxById,
-	TOTEM_SPOTS
+	TOTEM_SPOTS,
+	toX,
+	toZ,
+	WORLD_HALF,
+	worldToMap
 } from './mall3d.ts';
 
 const R = 0.35;
@@ -110,6 +114,31 @@ describe('nearestDoor', () => {
 
 	it('returns null in the open atrium', () => {
 		assert.equal(nearestDoor({ x: fountainSpot.x + 4.5, z: fountainSpot.z + 4.5 }), null);
+	});
+});
+
+describe('worldToMap', () => {
+	it('maps the world center to the map center', () => {
+		assert.deepEqual(worldToMap(0, 0, 150), { px: 75, py: 75 });
+	});
+
+	it('maps world corners to map corners', () => {
+		assert.deepEqual(worldToMap(-WORLD_HALF, -WORLD_HALF, 150), { px: 0, py: 0 });
+		assert.deepEqual(worldToMap(WORLD_HALF, WORLD_HALF, 150), { px: 150, py: 150 });
+	});
+
+	it('defaults to a 150px map', () => {
+		assert.deepEqual(worldToMap(0, 0), { px: 75, py: 75 });
+	});
+
+	it('round-trips with toX/toZ at the mall center', () => {
+		const { px, py } = worldToMap(toX(50), toZ(50), 100);
+		assert.ok(Math.abs(px - 50) < 1e-9);
+		assert.ok(Math.abs(py - 50) < 1e-9);
+	});
+
+	it('clamps out-of-bounds coordinates to the map edge', () => {
+		assert.deepEqual(worldToMap(-999, 999, 150), { px: 0, py: 150 });
 	});
 });
 

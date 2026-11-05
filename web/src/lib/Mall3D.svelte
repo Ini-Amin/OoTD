@@ -15,11 +15,13 @@
 		storeBoxById,
 		TOTEM_SPOTS,
 		WORLD_HALF,
+		worldToMap,
+		MINIMAP_SIZE,
 		type Collider,
 		type StoreBox,
 		type Vec2
 	} from '$lib/mall3d';
-	import type { MallFriend } from '$lib/mall';
+	import { mallStores, type MallFriend } from '$lib/mall';
 	import type { PresenceVisitor } from '$lib/presence.svelte';
 
 	type Props = {
@@ -67,6 +69,23 @@
 	// startPos only seeds remounts (e.g. leaving a store).
 	// svelte-ignore state_referenced_locally
 	let player: Vec2 = startPos ? { ...startPos } : { ...spawnPoint };
+	// Minimap mirror of the player position, throttled to 4 Hz so the render
+	// loop never pays for a reactive update per frame.
+	let mapPos = $state<Vec2>({ ...player });
+	let lastMapPush = 0;
+	let playerPt = $derived(worldToMap(mapPos.x, mapPos.z));
+	let friendDots = $derived(
+		friends.map((f, i) => {
+			const t = npcTargetForFriend(f, i);
+			return { id: f.id, name: f.name, hue: f.hue, pt: worldToMap(t.x, t.z) };
+		})
+	);
+	let visitorDots = $derived(
+		visitors.map((v) => {
+			const t = npcTargetForVisitor(v);
+			return { id: v.clientId, name: v.name, hue: v.hue, pt: worldToMap(t.x, t.z) };
+		})
+	);
 	let facing = Math.PI;
 	let keys = new Set<string>();
 	let shiftHeld = false;
@@ -852,6 +871,10 @@
 				onMove({ x: Math.round(player.x * 100) / 100, z: Math.round(player.z * 100) / 100 });
 			}
 		}
+		if (t - lastMapPush > 0.25) {
+			lastMapPush = t;
+			mapPos = { ...player };
+		}
 		renderer.render(scene, camera);
 	}
 
@@ -951,6 +974,55 @@
 			? 'Left thumb to walk · drag right side to look · tap Enter at a glowing door'
 			: 'WASD / arrows walk · Shift runs · drag to look · E enters a store'}
 	</p>
+	<svg
+		class="minimap"
+		data-testid="minimap"
+		width={MINIMAP_SIZE}
+		height={MINIMAP_SIZE}
+		viewBox={`0 0 ${MINIMAP_SIZE} ${MINIMAP_SIZE}`}
+		role="img"
+		aria-label="Store minimap"
+	>
+		<rect x="0" y="0" width={MINIMAP_SIZE} height={MINIMAP_SIZE} rx="10" class="map-bg" />
+		{#each mallStores as s (s.id)}
+			<rect
+				x={(s.x / 100) * MINIMAP_SIZE}
+				y={(s.y / 100) * MINIMAP_SIZE}
+				width={(s.w / 100) * MINIMAP_SIZE}
+				height={(s.h / 100) * MINIMAP_SIZE}
+				rx="2"
+				class="map-store"
+			>
+				<title>{s.name}</title>
+			</rect>
+		{/each}
+		{#each friendDots as f (f.id)}
+			<circle cx={f.pt.px} cy={f.pt.py} r="3" fill={`hsl(${f.hue} 65% 55%)`}>
+				<title>{f.name}</title>
+			</circle>
+		{/each}
+		{#each visitorDots as v (v.id)}
+			<circle
+				cx={v.pt.px}
+				cy={v.pt.py}
+				r="3"
+				fill={`hsl(${v.hue} 65% 55%)`}
+				stroke="#fff"
+				stroke-width="1"
+			>
+				<title>{v.name}</title>
+			</circle>
+		{/each}
+		<circle
+			data-testid="minimap-player"
+			cx={playerPt.px}
+			cy={playerPt.py}
+			r="4"
+			class="map-player"
+		>
+			<title>You</title>
+		</circle>
+	</svg>
 	{#if doorTarget}
 		<button
 			type="button"
@@ -1003,6 +1075,31 @@
 
 	.badge.error {
 		background: rgba(140, 30, 30, 0.88);
+	}
+
+	.minimap {
+		position: absolute;
+		left: 0.8rem;
+		top: 0.8rem;
+		z-index: 4;
+		border-radius: 10px;
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+	}
+
+	.map-bg {
+		fill: rgba(20, 22, 28, 0.78);
+	}
+
+	.map-store {
+		fill: rgba(255, 255, 255, 0.32);
+		stroke: rgba(255, 255, 255, 0.55);
+		stroke-width: 0.75;
+	}
+
+	.map-player {
+		fill: #3b82f6;
+		stroke: #fff;
+		stroke-width: 1.5;
 	}
 
 	.hint {

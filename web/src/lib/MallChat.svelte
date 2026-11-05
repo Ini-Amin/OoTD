@@ -21,6 +21,7 @@
 	let unreadTotal = $derived(mallChat.unreadTotal());
 	let thread = $derived(peerId ? (mallChat.whispers[peerId] ?? []) : []);
 	let peerName = $derived(peerId ? mallChat.threadName(peerId) : '');
+	let peerOnline = $derived(peerId ? visitors.some((v) => v.clientId === peerId) : false);
 
 	onMount(() => {
 		mallChat.connect();
@@ -208,10 +209,19 @@
 						←
 					</button>
 					<strong>{peerName}</strong>
+					<span
+						class="peer-status"
+						class:on={peerOnline}
+						data-testid="whisper-status"
+						aria-label={peerOnline ? 'Online' : 'Offline'}
+					>
+						{peerOnline ? 'Online' : 'Offline'}
+					</span>
 				</div>
 				<div class="chat-box" bind:this={boxEl} role="log" aria-live="polite" aria-label="Whisper thread">
 					{#if thread.length === 0}
 						<p class="chat-empty">Say hi to {peerName}. Only the two of you see this.</p>
+						<p class="chat-empty-sub">Pesan terkirim hanya jika mereka online.</p>
 					{/if}
 					{#each thread as m (m.id)}
 						<p class="chat-msg" class:mine={m.mine}>
@@ -423,10 +433,28 @@
 	}
 
 	.chat-empty {
-		margin: auto;
+		margin: auto auto 0;
 		color: var(--t-muted);
 		font-size: 0.83rem;
 		text-align: center;
+	}
+
+	.chat-empty-sub {
+		margin: 0 auto auto;
+		color: var(--t-muted);
+		font-size: 0.78rem;
+		text-align: center;
+	}
+
+	.peer-status {
+		margin-left: auto;
+		font-size: 0.72rem;
+		font-weight: 700;
+		color: #8a8f98;
+	}
+
+	.peer-status.on {
+		color: #1a9e54;
 	}
 
 	.chat-msg {
