@@ -9,10 +9,10 @@ import (
 	"github.com/ootd/ootd-api/internal/ai"
 )
 
-// Tool surface: a single identify_outfit tool reusing internal/ai.
+// Tool surface: identify_outfit + estimate_price, both reusing internal/ai.
 
 const (
-	toolName           = "identify_outfit"
+	identifyToolName   = "identify_outfit"
 	defaultMaxPieces   = 8
 	maxPiecesHardLimit = 20
 )
@@ -49,11 +49,32 @@ type aiMagicPiece struct {
 
 // outfitPiece is the honest MCP output shape. There is NO price data in
 // this repo, so Price is always null — never invent a number or a brand.
+// Links are pure marketplace SEARCH URLs built from the label (not
+// listings, not recommendations): the user can check real prices there.
 type outfitPiece struct {
-	Category    string   `json:"category"`
-	Label       string   `json:"label"`
-	Description string   `json:"description"`
-	Price       *float64 `json:"price"`
+	Category    string     `json:"category"`
+	Label       string     `json:"label"`
+	Description string     `json:"description"`
+	Price       *float64   `json:"price"`
+	Links       pieceLinks `json:"links"`
+}
+
+// pieceLinks holds marketplace search URLs for one piece label.
+type pieceLinks struct {
+	TokopediaSearch string `json:"tokopedia_search"`
+	ShopeeSearch    string `json:"shopee_search"`
+	GoogleShopping  string `json:"google_shopping"`
+}
+
+// buildPieceLinks builds search URLs from a sanitized label. Pure:
+// url.QueryEscape keeps weird/unicode labels URL-safe. Unit-testable.
+func buildPieceLinks(label string) pieceLinks {
+	q := url.QueryEscape(label)
+	return pieceLinks{
+		TokopediaSearch: "https://www.tokopedia.com/search?q=" + q,
+		ShopeeSearch:    "https://shopee.co.id/search?keyword=" + q,
+		GoogleShopping:  "https://www.google.com/search?tbm=shop&q=" + q,
+	}
 }
 
 type outfitOutput struct {
@@ -106,11 +127,18 @@ func handleMessage(client *ai.Client, msg []byte) *rpcResponse {
 		}}
 	case "tools/list":
 		return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
-			"tools": []mcpTool{{
-				Name:        toolName,
-				Description: "Identify garments in an outfit photo. Returns category/label/description per piece; price is always null (no catalog).",
-				InputSchema: identifyInputSchema(),
-			}},
+			"tools": []mcpTool{
+				{
+					Name:        identifyToolName,
+					Description: "Identify garments in an outfit photo. Returns category/label/description/links per piece; price is always null (no catalog), links are marketplace search URLs.",
+					InputSchema: identifyInputSchema(),
+				},
+				{
+					Name:        estimateToolName,
+					Description: "Estimate an IDR price RANGE for one garment. Low-confidence AI guess only, never a market price or brand.",
+					InputSchema: estimateInputSchema(),
+				},
+			},
 		}}
 	case "tools/call":
 		return handleToolCall(client, req.ID, req.Params)
@@ -127,7 +155,12 @@ func handleToolCall(client *ai.Client, id *json.RawMessage, params json.RawMessa
 	if err := json.Unmarshal(params, &call); err != nil {
 		return newErrorResponse(id, -32602, "invalid params")
 	}
-	if call.Name != toolName {
+	switch call.Name {
+	case identifyToolName:
+		// handled below
+	case estimateToolName:
+		return handleEstimateCall(client, id, call.Arguments)
+	default:
 		return newErrorResponse(id, -32602, "unknown tool: "+call.Name)
 	}
 	var args toolArguments
@@ -225,6 +258,7 @@ func parsePieces(raw string, maxPieces int) ([]outfitPiece, error) {
 			Label:       label,
 			Description: label,
 			Price:       nil,
+			Links:       buildPieceLinks(label),
 		})
 		if len(out) >= maxPieces {
 			break

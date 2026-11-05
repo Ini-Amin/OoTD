@@ -147,6 +147,21 @@ func (c *Client) AnalyzeOutfit(imgURL string) (string, error) {
 	return c.complete(c.visionModel, msgs, 4000)
 }
 
+// EstimatePrice asks the chat model for an IDR price range for one garment.
+// It returns the raw model text; parsing/validation lives with the caller
+// (api/cmd/mcp/estimate.go) so the honesty gate stays in one place.
+// Label/category/condition must already be normalized by the caller.
+func (c *Client) EstimatePrice(label, category, condition string) (string, error) {
+	if c.chatModel == "" {
+		return "", fmt.Errorf("ai chat model not configured: set AI_CHAT_MODEL")
+	}
+	msgs := []chatMessage{
+		textMsg("system", EstimatePriceSystemPrompt),
+		textMsg("user", EstimatePriceUserPrompt(label, category, condition)),
+	}
+	return c.complete(c.chatModel, msgs, 4000)
+}
+
 // StylistReply runs one turn of the AI Stylist chat.
 // history holds prior turns as {role, content} pairs (roles: user/assistant).
 func (c *Client) StylistReply(history [][2]string, userText string) (string, error) {

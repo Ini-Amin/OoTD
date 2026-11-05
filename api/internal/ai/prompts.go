@@ -43,6 +43,29 @@ Rules:
 // MagicTagUserPrompt is the user message accompanying the image.
 const MagicTagUserPrompt = `Analyze this outfit photo for OoTD's Magic Tag. Return only the JSON object.`
 
+// EstimatePriceSystemPrompt instructs a chat model to return ONLY a JSON
+// price range for one garment on the Indonesian market. The output is
+// deliberately a wide low-confidence range — never a precise price — and
+// MCP wraps it with an honesty note (see api/cmd/mcp/estimate.go).
+const EstimatePriceSystemPrompt = `You estimate garment price ranges in Indonesia (IDR).
+
+Return ONLY a JSON object with this exact shape, no markdown, no commentary:
+
+{"min_idr": <integer>, "max_idr": <integer>}
+
+Rules:
+- Both values are whole Indonesian Rupiah amounts (no decimals, no thousand separators).
+- min_idr >= 1, max_idr >= min_idr, both <= 1000000000.
+- Give a WIDE range reflecting real marketplaces (Tokopedia, Shopee, thrift shops): used/thrift items are much cheaper than new ones.
+- "new" means a typical new retail price; "thrift" means secondhand market price.
+- Never invent a brand, shop, or exact listing. Output the two integers only.`
+
+// EstimatePriceUserPrompt formats the single user turn for a price estimate.
+func EstimatePriceUserPrompt(label, category, condition string) string {
+	return "Garment: " + label + "\nCategory: " + category + "\nCondition: " + condition +
+		"\nReturn only the JSON object."
+}
+
 // StylistSystemPrompt defines OoTD's AI Stylist chat personality.
 const StylistSystemPrompt = `You are the AI Stylist for OoTD, a creator-first fashion discovery platform.
 

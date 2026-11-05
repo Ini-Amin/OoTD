@@ -1,9 +1,11 @@
-// Command mcp is OoTD's MCP server exposing the identify_outfit tool.
+// Command mcp is OoTD's MCP server exposing identify_outfit + estimate_price.
 //
 // It reuses the same AI client as the HTTP API (internal/ai) so Magic Tag
-// behavior stays identical: the tool calls AnalyzeOutfit on a public
-// image URL and returns sanitized pieces. Only stdio framing and JSON-RPC
-// dispatch live here; no AI logic is duplicated.
+// behavior stays identical: identify_outfit calls AnalyzeOutfit on a public
+// image URL and returns sanitized pieces with marketplace search links,
+// while estimate_price calls EstimatePrice for a low-confidence IDR range.
+// Only stdio framing and JSON-RPC dispatch live here; no AI logic is
+// duplicated.
 //
 // Transport: newline-delimited JSON-RPC over stdio (the MCP standard).
 // Content-Length framed messages (LSP style) are also accepted on input,
@@ -25,7 +27,7 @@ func main() {
 
 	client := ai.NewClientFromEnv()
 	if client == nil {
-		log.Print("mcp: AI_API_KEY not set; identify_outfit will report ai-not-configured")
+		log.Print("mcp: AI_API_KEY not set; tools will report ai-not-configured")
 	}
 
 	in := bufio.NewReader(os.Stdin)

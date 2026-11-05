@@ -98,12 +98,27 @@ The frontend shows preview data when the API is not running, then automatically 
 
 ## MCP server
 
-`api/cmd/mcp` exposes one MCP tool over stdio — `identify_outfit` — so an AI
-assistant can identify garments in an outfit photo. It reuses the same
-`internal/ai` client as `POST /v1/analyze` (no duplicated AI logic) and
-returns `{pieces: [{category, label, description}]}`. There is no price data
-in this repo, so every piece reports `"price": null` with a `price_note`
-explaining a catalog is needed — prices are never invented.
+`api/cmd/mcp` exposes two MCP tools over stdio. Both reuse the same
+`internal/ai` client as the HTTP API (no duplicated AI logic):
+
+- `identify_outfit` — identify garments in an outfit photo; returns
+  `{pieces: [{category, label, description, price, links}], price_note}`.
+  There is no price data in this repo, so every piece reports
+  `"price": null` with a `price_note` explaining a catalog is needed —
+  prices are never invented. `links` holds marketplace **search** URLs
+  built from the label (`tokopedia_search`, `shopee_search`,
+  `google_shopping`), so the user can check real prices themselves.
+- `estimate_price` — input `{label, category?, condition?}` (`condition`
+  is `new` or `thrift`, default `new`); returns an IDR range
+  `{min_idr, max_idr, currency: "IDR", confidence: "low",
+  note: "Estimasi AI, bukan harga pasar aktual"}`.
+
+Honesty limits (hard gates, enforced in code + unit tests): estimates are
+always a low-confidence AI range, never a precise market price; absurd
+model output (missing/non-integer/non-positive, `min > max`, over
+Rp1 miliar) is rejected as a tool error, never silently clamped; and no
+tool claims brands, shops, or listings — `links` are search pages, not
+recommendations.
 
 Build:
 
