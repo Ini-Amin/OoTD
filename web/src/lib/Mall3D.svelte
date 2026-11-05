@@ -23,6 +23,13 @@
 	} from '$lib/mall3d';
 	import { mallStores, type MallFriend } from '$lib/mall';
 	import type { PresenceVisitor } from '$lib/presence.svelte';
+	import { closet } from '$lib/closet.svelte';
+	import {
+		DEFAULT_CAPSULE,
+		DEFAULT_JOINTS,
+		DEFAULT_SURFACE,
+		outfitTintForWorn
+	} from '$lib/avatarOutfit';
 
 	type Props = {
 		friends: MallFriend[];
@@ -55,6 +62,13 @@
 	let mixer: THREE.AnimationMixer | null = null;
 	let avatar: THREE.Group | null = null;
 	let playerCapsule: THREE.Mesh | null = null;
+	// Opsi B outfit refs: xbot.glb has no per-garment meshes (both meshes span
+	// the full body), so the surface takes the worn-top colour and the inner
+	// joints layer takes the worn-bottom colour. See avatarOutfit.ts.
+	let surfaceMats: THREE.MeshStandardMaterial[] = [];
+	let jointsMats: THREE.MeshStandardMaterial[] = [];
+	let outfitPin: THREE.Sprite | null = null;
+	let outfitPinKey = '';
 	let clips: Record<string, THREE.AnimationClip> = {};
 	let currentAction: THREE.AnimationAction | null = null;
 	let currentAnim = '';
@@ -484,6 +498,46 @@
 		}
 	}
 
+	function setMatColor(mats: THREE.MeshStandardMaterial[], hex: string): void {
+		for (const m of mats) {
+			m.color.set(hex);
+			m.needsUpdate = true;
+		}
+	}
+
+	function refreshOutfitPin(): void {
+		const top = closet.wornPiece('top');
+		const bottom = closet.wornPiece('bottom');
+		const key = `${top?.id ?? ''}|${bottom?.id ?? ''}`;
+		if (key === outfitPinKey) return;
+		outfitPinKey = key;
+		if (outfitPin && avatar) {
+			avatar.remove(outfitPin);
+			outfitPin = null;
+		}
+		const short = (l: string): string => l.replace(/^.*· /, '');
+		const label = top
+			? short(top.label).slice(0, 13) + (bottom ? ' +1' : '')
+			: bottom
+				? short(bottom.label).slice(0, 13)
+				: '';
+		if (!label || !avatar) return;
+		outfitPin = makeNameSprite(label, 265);
+		outfitPin.position.y = 2.45;
+		avatar.add(outfitPin);
+	}
+
+	/** Apply closet.worn tint to the player avatar (Opsi B). Idempotent. */
+	function applyAvatarOutfit(): void {
+		const tint = outfitTintForWorn({ top: closet.wornPiece('top'), bottom: closet.wornPiece('bottom') });
+		setMatColor(surfaceMats, tint.surface ?? DEFAULT_SURFACE);
+		setMatColor(jointsMats, tint.joints ?? DEFAULT_JOINTS);
+		if (playerCapsule?.material instanceof THREE.MeshStandardMaterial) {
+			playerCapsule.material.color.set(tint.surface ?? DEFAULT_CAPSULE);
+		}
+		refreshOutfitPin();
+	}
+
 	async function loadAvatar(): Promise<void> {
 		if (!scene) return;
 		playerCapsule = new THREE.Mesh(
@@ -500,9 +554,23 @@
 			avatar.scale.set(1.05, 1.05, 1.05);
 			avatar.position.set(player.x, 0, player.z);
 			avatar.rotation.y = facing;
+			surfaceMats = [];
+			jointsMats = [];
 			avatar.traverse((child) => {
 				if ((child as THREE.Mesh).isMesh) {
 					child.castShadow = true;
+					const mesh = child as THREE.Mesh;
+					const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+					const isJoints =
+						mesh.name.toLowerCase().includes('joint') ||
+						mats.some(
+							(m) => m && 'name' in m && String(m.name).toLowerCase().includes('joint')
+						);
+					for (const m of mats) {
+						if (m instanceof THREE.MeshStandardMaterial) {
+							(isJoints ? jointsMats : surfaceMats).push(m);
+						}
+					}
 				}
 			});
 			for (const clip of gltf.animations ?? []) clips[clip.name] = clip;
@@ -512,9 +580,11 @@
 			}
 			scene.add(avatar);
 			if (playerCapsule) playerCapsule.visible = false;
+			applyAvatarOutfit();
 			avatarReady = true;
 		} catch {
 			loadError = 'Avatar model failed to load — playing as guest capsule';
+			applyAvatarOutfit();
 		}
 	}
 
@@ -680,6 +750,18 @@
 				visitorAvatars.set(v.clientId, group);
 			}
 		}
+	});
+
+	// Re-tint the player avatar whenever the worn outfit changes (e.g. leaving
+	// a store after a try-on remounts this component and the effect below sees
+	// the fresh closet state; in-place worn edits while mounted apply live).
+	$effect(() => {
+		const topId = closet.worn.top;
+		const bottomId = closet.worn.bottom;
+		if (!scene || (!avatar && !playerCapsule)) return;
+		void topId;
+		void bottomId;
+		applyAvatarOutfit();
 	});
 
 	const GAME_KEYS = new Set([
