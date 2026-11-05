@@ -172,3 +172,26 @@ func validateCraftRequest(in craftRequestInput) (craftRequestInput, error) {
 
 	return cleaned, nil
 }
+
+// validateRequestStatus allows only maker-driven transitions: from open to
+// accepted/declined/done, plus accepted to done (work completed). Reopening
+// (back to open) is rejected: requesters file a new request instead.
+// done and declined are terminal.
+func validateRequestStatus(current, next string) (string, error) {
+	switch next {
+	case "accepted", "declined", "done":
+	default:
+		return "", errors.New("status must be one of: accepted, declined, done")
+	}
+	switch current {
+	case "open":
+		return next, nil
+	case "accepted":
+		if next != "done" {
+			return "", errors.New("accepted requests can only be marked done")
+		}
+		return next, nil
+	default:
+		return "", errors.New("only open or accepted requests can change status")
+	}
+}

@@ -61,6 +61,7 @@ type UserProfile struct {
 	Username    string  `json:"username"`
 	DisplayName string  `json:"displayName"`
 	Bio         string  `json:"bio"`
+	Role        string  `json:"role"`
 	Theme       *Theme  `json:"theme"`
 }
 
@@ -97,6 +98,8 @@ func NewServer(db *pgxpool.Pool, auth *Authenticator, allowedOrigin string) http
 	mux.HandleFunc("GET /v1/themes", s.listThemes)
 	mux.HandleFunc("GET /v1/search", s.searchOutfits)
 	mux.HandleFunc("POST /v1/requests", s.auth.requireAuth(s.createCraftRequest))
+	mux.HandleFunc("GET /v1/requests", s.auth.requireAuth(s.listCraftRequests))
+	mux.HandleFunc("PATCH /v1/requests/{id}", s.auth.requireAuth(s.updateCraftRequest))
 	mux.HandleFunc("POST /v1/analyze", s.auth.requireAuth(s.analyzeOutfit))
 	mux.HandleFunc("POST /v1/stylist", s.auth.requireAuth(s.stylistChat))
 	mux.HandleFunc("POST /v1/uploads", s.auth.requireAuth(s.uploadImage))
@@ -484,7 +487,7 @@ func (s *server) listThemes(w http.ResponseWriter, r *http.Request) {
 func withCORS(next http.Handler, allowedOrigin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 		if r.Method == http.MethodOptions {

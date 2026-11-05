@@ -1,8 +1,10 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { auth } from './auth.svelte';
 import { getSupabase } from './supabase';
+import type { MakerRole } from './makers';
 import {
 	joinVisitors,
+	parsePresenceRole,
 	toValidPos,
 	POS_STALE_MS,
 	type PosEntry,
@@ -14,6 +16,8 @@ export type PresenceVisitor = {
 	name: string;
 	hue: number;
 	storeId: string | null;
+	/** Self-reported chat role. Display hint only — never authorization. */
+	role: MakerRole;
 	/** Live world position in meters (3D mall); null when stale/unknown. */
 	x: number | null;
 	z: number | null;
@@ -35,6 +39,11 @@ function displayName(): string {
 	if (p) return (p.displayName?.trim() || `@${p.username}`).slice(0, 40);
 	if (!guestName) guestName = `Guest-${Math.floor(1000 + Math.random() * 9000)}`;
 	return guestName;
+}
+
+/** This tab's tracked chat role: maker only for logged-in maker profiles. */
+function myRole(): MakerRole {
+	return auth.profile?.role === 'maker' ? 'maker' : 'user';
 }
 
 /** This tab's chat identity, shared by presence roster and mall chat. */
@@ -84,6 +93,7 @@ class PresenceStore {
 							name?: unknown;
 							hue?: unknown;
 							storeId?: unknown;
+							role?: unknown;
 						}>();
 						const next: RosterEntry[] = [];
 						for (const [key, presences] of Object.entries(state)) {
@@ -96,7 +106,8 @@ class PresenceStore {
 									clientId: key,
 									name: p.name.slice(0, 40),
 									hue: ((Math.round(p.hue) % 360) + 360) % 360,
-									storeId: p.storeId
+									storeId: p.storeId,
+									role: parsePresenceRole(p.role)
 								});
 								break;
 							}
@@ -200,6 +211,21 @@ class PresenceStore {
 		}
 	}
 
+	#lastIdentity = '';
+
+	/**
+	 * Re-track once when this tab's identity (name/role) changes, e.g. the
+	 * user signs in as a maker after presence connected. No-op while the
+	 * identity is unchanged, so callers can invoke it from an effect.
+	 */
+	refreshIdentity(): void {
+		if (!this.#channel || this.status !== 'live') return;
+		const key = `${displayName()}|${myRole()}`;
+		if (key === this.#lastIdentity) return;
+		this.#lastIdentity = key;
+		void this.track();
+	}
+
 	/** Broadcast this tab's live 3D position. Best-effort, never throws. */
 	sendPos(x: number, z: number): void {
 		if (!this.#channel || this.status !== 'live') return;
@@ -223,10 +249,12 @@ class PresenceStore {
 	private async track(): Promise<void> {
 		if (!this.#channel) return;
 		try {
+			this.#lastIdentity = `${displayName()}|${myRole()}`;
 			await this.#channel.track({
 				name: displayName(),
 				hue: this.hue,
-				storeId: this.#storeId
+				storeId: this.#storeId,
+				role: myRole()
 			});
 		} catch {
 			// Offline tolerance: presence is best-effort.

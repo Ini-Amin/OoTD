@@ -117,7 +117,7 @@
 	{#if success}
 		<div class="success-panel">
 			<p class="success-message">
-				Request sent. A craftsmaker will see it once marketplace accounts open.
+				Request sent. Makers review incoming requests from their dashboard.
 			</p>
 			{#if onclose}
 				<button type="button" class="btn-primary" onclick={onclose}>Done</button>

@@ -1,7 +1,7 @@
 // Merge rules for presence roster + broadcast positions. Run: npm run test.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { joinVisitors, toValidPos, POS_STALE_MS } from './presenceJoin.ts';
+import { joinVisitors, parsePresenceRole, toValidPos, POS_STALE_MS } from './presenceJoin.ts';
 
 const NOW = 1_700_000_000_000;
 
@@ -24,25 +24,29 @@ describe('toValidPos', () => {
 describe('joinVisitors', () => {
 	it('attaches fresh positions to roster entries', () => {
 		const out = joinVisitors(
-			[{ clientId: 'a', name: 'A', hue: 1, storeId: null }],
+			[{ clientId: 'a', name: 'A', hue: 1, storeId: null, role: 'user' }],
 			new Map([['a', { x: 2, z: 3, at: NOW }]]),
 			NOW
 		);
-		assert.deepEqual(out, [{ clientId: 'a', name: 'A', hue: 1, storeId: null, x: 2, z: 3 }]);
+		assert.deepEqual(out, [
+			{ clientId: 'a', name: 'A', hue: 1, storeId: null, role: 'user', x: 2, z: 3 }
+		]);
 	});
 
 	it('nulls stale positions so the view falls back', () => {
 		const out = joinVisitors(
-			[{ clientId: 'a', name: 'A', hue: 1, storeId: 'zara' }],
+			[{ clientId: 'a', name: 'A', hue: 1, storeId: 'zara', role: 'user' }],
 			new Map([['a', { x: 2, z: 3, at: NOW - POS_STALE_MS - 1 }]]),
 			NOW
 		);
-		assert.deepEqual(out, [{ clientId: 'a', name: 'A', hue: 1, storeId: 'zara', x: null, z: null }]);
+		assert.deepEqual(out, [
+			{ clientId: 'a', name: 'A', hue: 1, storeId: 'zara', role: 'user', x: null, z: null }
+		]);
 	});
 
 	it('nulls positions for entries without any broadcast yet', () => {
 		const out = joinVisitors(
-			[{ clientId: 'a', name: 'A', hue: 1, storeId: null }],
+			[{ clientId: 'a', name: 'A', hue: 1, storeId: null, role: 'user' }],
 			new Map(),
 			NOW
 		);
@@ -50,9 +54,18 @@ describe('joinVisitors', () => {
 		assert.equal(out[0].z, null);
 	});
 
+	it('preserves the maker role through the join', () => {
+		const out = joinVisitors(
+			[{ clientId: 'm', name: 'Maker', hue: 9, storeId: 'makers', role: 'maker' }],
+			new Map([['m', { x: 1, z: 1, at: NOW }]]),
+			NOW
+		);
+		assert.equal(out[0].role, 'maker');
+	});
+
 	it('ignores positions from unknown ids (roster is truth)', () => {
 		const out = joinVisitors(
-			[{ clientId: 'a', name: 'A', hue: 1, storeId: null }],
+			[{ clientId: 'a', name: 'A', hue: 1, storeId: null, role: 'user' }],
 			new Map([
 				['ghost', { x: 9, z: 9, at: NOW }],
 				['a', { x: 1, z: 1, at: NOW }]
@@ -61,5 +74,21 @@ describe('joinVisitors', () => {
 		);
 		assert.equal(out.length, 1);
 		assert.deepEqual([out[0].x, out[0].z], [1, 1]);
+	});
+});
+
+describe('parsePresenceRole', () => {
+	it('honors only the exact maker string', () => {
+		assert.equal(parsePresenceRole('maker'), 'maker');
+	});
+
+	it('falls back to user for missing, spoofed, and legacy payloads', () => {
+		assert.equal(parsePresenceRole(undefined), 'user');
+		assert.equal(parsePresenceRole(null), 'user');
+		assert.equal(parsePresenceRole('user'), 'user');
+		assert.equal(parsePresenceRole('Maker'), 'user');
+		assert.equal(parsePresenceRole('admin'), 'user');
+		assert.equal(parsePresenceRole(1), 'user');
+		assert.equal(parsePresenceRole({}), 'user');
 	});
 });

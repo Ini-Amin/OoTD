@@ -11,7 +11,7 @@ import (
 )
 
 const userProfileSelectSQL = `
-	SELECT u.username, u.display_name, u.bio,
+	SELECT u.username, u.display_name, u.bio, u.role,
 	       t.slug, t.name, t.bg, t.surface, t.fg, t.accent, t.font, t.radius
 	FROM users u
 	LEFT JOIN themes t ON t.id = u.theme_id
@@ -21,7 +21,7 @@ func scanUserProfile(row rowScanner) (UserProfile, error) {
 	var u UserProfile
 	var slug, name, bg, surface, fg, accent, font, radius *string
 	err := row.Scan(
-		&u.Username, &u.DisplayName, &u.Bio,
+		&u.Username, &u.DisplayName, &u.Bio, &u.Role,
 		&slug, &name, &bg, &surface, &fg, &accent, &font, &radius,
 	)
 	if err != nil {
@@ -91,9 +91,9 @@ func (s *server) postMe(w http.ResponseWriter, r *http.Request, claims *authClai
 		WITH inserted AS (
 			INSERT INTO users (username, display_name, auth_id, theme_id)
 			VALUES ($1, $2, $3::uuid, (SELECT id FROM themes WHERE slug = 'minimal'))
-			RETURNING username, display_name, bio, theme_id
+			RETURNING username, display_name, bio, role, theme_id
 		)
-		SELECT u.username, u.display_name, u.bio,
+		SELECT u.username, u.display_name, u.bio, u.role,
 		       t.slug, t.name, t.bg, t.surface, t.fg, t.accent, t.font, t.radius
 		FROM inserted u
 		LEFT JOIN themes t ON t.id = u.theme_id

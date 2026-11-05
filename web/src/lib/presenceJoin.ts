@@ -1,12 +1,18 @@
 // Pure join of the presence roster with live broadcast positions.
 // Split out of presence.svelte.ts (which uses runes) so the merge rules stay
 // unit-testable in node (presenceJoin.test.ts).
+import type { MakerRole } from './makers';
 
 export type RosterEntry = {
 	clientId: string;
 	name: string;
 	hue: number;
 	storeId: string | null;
+	/**
+	 * Self-reported chat role from the track payload. Display hint only —
+	 * never authorization (the maker dashboard and API enforce server-side).
+	 */
+	role: MakerRole;
 };
 
 export type PosEntry = { x: number; z: number; at: number };
@@ -18,6 +24,15 @@ export type JoinedVisitor = RosterEntry & {
 
 /** Positions older than this fall back to the store door / atrium spot. */
 export const POS_STALE_MS = 15000;
+
+/**
+ * Strict role parse for inbound presence payloads. Only the exact string
+ * 'maker' is honored; everything else (missing, tampered, old clients)
+ * falls back to 'user'.
+ */
+export function parsePresenceRole(role: unknown): MakerRole {
+	return role === 'maker' ? 'maker' : 'user';
+}
 
 function isValidPos(p: unknown): p is { x: number; z: number } {
 	if (typeof p !== 'object' || p === null) return false;

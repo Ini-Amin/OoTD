@@ -578,3 +578,38 @@ func TestVerifyJWT(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateRequestStatus(t *testing.T) {
+	tests := []struct {
+		name    string
+		current string
+		next    string
+		want    string
+		wantErr bool
+	}{
+		{name: "open to accepted", current: "open", next: "accepted", want: "accepted"},
+		{name: "open to declined", current: "open", next: "declined", want: "declined"},
+		{name: "open to done", current: "open", next: "done", want: "done"},
+		{name: "open to open rejected", current: "open", next: "open", wantErr: true},
+		{name: "unknown status rejected", current: "open", next: "shipped", wantErr: true},
+		{name: "empty status rejected", current: "open", next: "", wantErr: true},
+		{name: "accepted to done", current: "accepted", next: "done", want: "done"},
+		{name: "accepted to accepted rejected", current: "accepted", next: "accepted", wantErr: true},
+		{name: "accepted to declined rejected", current: "accepted", next: "declined", wantErr: true},
+		{name: "declined is terminal", current: "declined", next: "accepted", wantErr: true},
+		{name: "declined to done rejected", current: "declined", next: "done", wantErr: true},
+		{name: "done is terminal", current: "done", next: "accepted", wantErr: true},
+		{name: "done to declined rejected", current: "done", next: "declined", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := validateRequestStatus(tc.current, tc.next)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validateRequestStatus(%q, %q) error = %v, wantErr = %v", tc.current, tc.next, err, tc.wantErr)
+			}
+			if !tc.wantErr && got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

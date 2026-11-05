@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { mallChat } from '$lib/mallChat.svelte';
+	import { auth } from '$lib/auth.svelte';
 	import { presence } from '$lib/presence.svelte';
 	import { storeById } from '$lib/mall';
 
@@ -17,6 +18,7 @@
 
 	const makers = storeById('makers');
 	let visitors = $derived(presence.visitors.filter((v) => v.clientId !== presence.clientId));
+	let makersOnline = $derived(visitors.filter((v) => v.role === 'maker'));
 	let threadIds = $derived(Object.keys(mallChat.whispers));
 	let unreadTotal = $derived(mallChat.unreadTotal());
 	let thread = $derived(peerId ? (mallChat.whispers[peerId] ?? []) : []);
@@ -46,6 +48,13 @@
 		if (tab === 'whisper' && peerId && u[peerId]) mallChat.markRead(peerId);
 	});
 
+	// Keep this tab's roster identity fresh: signing in as a maker after
+	// presence connected must update the tracked name/role once.
+	$effect(() => {
+		const p = auth.profile;
+		if (p !== undefined && presence.status === 'live') presence.refreshIdentity();
+	});
+
 	function lastPreview(id: string): string {
 		const t = mallChat.whispers[id] ?? [];
 		const last = t[t.length - 1];
@@ -60,6 +69,11 @@
 	function pickPeer(id: string) {
 		peerId = id;
 		input = '';
+	}
+
+	function whisperMaker(id: string) {
+		pickPeer(id);
+		tab = 'whisper';
 	}
 
 	async function send() {
@@ -257,10 +271,24 @@
 				{#if makers}
 					<p class="maker-name">{makers.name}</p>
 					<p class="maker-blurb">{makers.blurb}</p>
-					<p class="maker-note">
-						Makers are not online here yet. Send a craft request and they will see it once
-						marketplace accounts open.
-					</p>
+					{#if makersOnline.length > 0}
+						<p class="maker-note" data-testid="makers-online">
+							{makersOnline.length}
+							{makersOnline.length === 1 ? 'maker is' : 'makers are'} online now. Say hi —
+							only the two of you see the whisper.
+						</p>
+						{#each makersOnline as m (m.clientId)}
+							<button type="button" class="peer-row" onclick={() => whisperMaker(m.clientId)}>
+								<span class="peer-name">{m.name}</span>
+								<span class="peer-sub">{storeLabel(m.storeId)} · whisper</span>
+							</button>
+						{/each}
+					{:else}
+						<p class="maker-note" data-testid="makers-offline">
+							No makers online right now. Send a craft request and they will see it in
+							their dashboard.
+						</p>
+					{/if}
 					<a class="maker-cta" href="/mannequin?craft=1">Request a craft</a>
 				{:else}
 					<p class="chat-empty">No makers listed yet.</p>

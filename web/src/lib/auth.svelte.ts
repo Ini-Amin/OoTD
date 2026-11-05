@@ -1,11 +1,16 @@
 import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
 import type { Theme } from '$lib/themes';
 import { apiBase } from '$lib/outfits';
+import type { MakerRole } from '$lib/makers';
+
+export type { MakerRole };
 
 export type Profile = {
 	username: string;
 	displayName: string;
 	bio: string;
+	/** Account role from users.role. Optional for backward compat with cached profiles. */
+	role?: MakerRole;
 	theme: Theme | null;
 };
 
