@@ -3,7 +3,9 @@
 	import { mallChat } from '$lib/mallChat.svelte';
 	import { auth } from '$lib/auth.svelte';
 	import { presence } from '$lib/presence.svelte';
-	import { storeById } from '$lib/mall';
+	import { mallFriends, storeById } from '$lib/mall';
+	import { BOT_BADGE, BOT_THREAD_LABEL, botPeerId, isBotPeerId } from '$lib/mallBots';
+	import { playClick } from '$lib/mallSound';
 
 	/** Overlay mode floats inside the 3D stage; docked mode fills its parent. */
 	let { overlay = false }: { overlay?: boolean } = $props();
@@ -24,6 +26,9 @@
 	let thread = $derived(peerId ? (mallChat.whispers[peerId] ?? []) : []);
 	let peerName = $derived(peerId ? mallChat.threadName(peerId) : '');
 	let peerOnline = $derived(peerId ? visitors.some((v) => v.clientId === peerId) : false);
+	// Demo-bot threads are local-only: always sendable, even offline.
+	let botThread = $derived(isBotPeerId(peerId));
+	let sendReady = $derived(botThread || mallChat.status === 'live');
 
 	onMount(() => {
 		mallChat.connect();
@@ -78,8 +83,18 @@
 
 	async function send() {
 		const text = input.trim();
-		if (!text || sending || mallChat.status !== 'live') return;
+		if (!text || sending) return;
 		if (tab === 'whisper' && !peerId) return;
+		if (tab === 'whisper' && botThread) {
+			sending = true;
+			input = '';
+			const ok = mallChat.sendBotWhisper(peerId as string, text);
+			if (ok) playClick();
+			else if (mallChat.lastRejection) input = text;
+			sending = false;
+			return;
+		}
+		if (mallChat.status !== 'live') return;
 		sending = true;
 		input = '';
 		let ok: boolean;
@@ -88,7 +103,8 @@
 		} else {
 			ok = await mallChat.send(text);
 		}
-		if (!ok && mallChat.lastRejection) input = text;
+		if (ok) playClick();
+		else if (mallChat.lastRejection) input = text;
 		sending = false;
 	}
 
@@ -199,11 +215,17 @@
 			{#if !peerId}
 				<div class="chat-box" aria-label="Visitors">
 					{#if visitors.length === 0 && threadIds.length === 0}
-						<p class="chat-empty">Nobody else is here yet. Open this page in a second tab to try whispering.</p>
+						<p class="chat-empty">
+							Nobody else is here yet. Say hi to a demo bot below, or open a second
+							tab to whisper a human.
+						</p>
 					{/if}
 					{#each threadIds as id (id)}
 						<button type="button" class="peer-row" onclick={() => pickPeer(id)}>
 							<span class="peer-name">{mallChat.threadName(id)}</span>
+							{#if isBotPeerId(id)}
+								<span class="bot-badge" data-testid="bot-badge">{BOT_BADGE}</span>
+							{/if}
 							<span class="peer-sub">{lastPreview(id)}</span>
 							{#if (mallChat.unread[id] ?? 0) > 0}
 								<span class="tab-badge">{mallChat.unread[id]}</span>
@@ -216,6 +238,19 @@
 							<span class="peer-sub">{storeLabel(v.storeId)}</span>
 						</button>
 					{/each}
+					<p class="bot-dir-label">Demo bots — bukan manusia</p>
+					{#each mallFriends.filter((f) => !threadIds.includes(botPeerId(f.id))) as f (f.id)}
+						<button
+							type="button"
+							class="peer-row"
+							data-testid="bot-row-{f.id}"
+							onclick={() => pickPeer(botPeerId(f.id))}
+						>
+							<span class="peer-name">{mallChat.threadName(botPeerId(f.id))}</span>
+							<span class="bot-badge" data-testid="bot-badge">{BOT_BADGE}</span>
+							<span class="peer-sub">{f.note}</span>
+						</button>
+					{/each}
 				</div>
 			{:else}
 				<div class="thread-bar">
@@ -223,19 +258,28 @@
 						←
 					</button>
 					<strong>{peerName}</strong>
+					{#if botThread}
+						<span class="bot-label" data-testid="bot-label">{BOT_THREAD_LABEL}</span>
+					{/if}
 					<span
 						class="peer-status"
 						class:on={peerOnline}
+						class:bot={botThread}
 						data-testid="whisper-status"
-						aria-label={peerOnline ? 'Online' : 'Offline'}
+						aria-label={botThread ? 'Bot demo, balasan otomatis' : peerOnline ? 'Online' : 'Offline'}
 					>
-						{peerOnline ? 'Online' : 'Offline'}
+						{botThread ? 'Bot' : peerOnline ? 'Online' : 'Offline'}
 					</span>
 				</div>
 				<div class="chat-box" bind:this={boxEl} role="log" aria-live="polite" aria-label="Whisper thread">
 					{#if thread.length === 0}
-						<p class="chat-empty">Say hi to {peerName}. Only the two of you see this.</p>
-						<p class="chat-empty-sub">Pesan terkirim hanya jika mereka online.</p>
+						{#if botThread}
+							<p class="chat-empty">Say hi to {peerName}. Balasannya otomatis.</p>
+							<p class="chat-empty-sub">Bot demo — bukan manusia.</p>
+						{:else}
+							<p class="chat-empty">Say hi to {peerName}. Only the two of you see this.</p>
+							<p class="chat-empty-sub">Pesan terkirim hanya jika mereka online.</p>
+						{/if}
 					{/if}
 					{#each thread as m (m.id)}
 						<p class="chat-msg" class:mine={m.mine}>
@@ -257,11 +301,11 @@
 						type="text"
 						bind:value={input}
 						maxlength={500}
-						placeholder={mallChat.status === 'live' ? `Whisper to ${peerName}…` : 'Waiting for connection…'}
+						placeholder={sendReady ? `Whisper to ${peerName}…` : 'Waiting for connection…'}
 						aria-label="Whisper message"
-						disabled={sending || mallChat.status !== 'live'}
+						disabled={sending || !sendReady}
 					/>
-					<button type="submit" disabled={sending || !input.trim() || mallChat.status !== 'live'}>
+					<button type="submit" disabled={sending || !input.trim() || !sendReady}>
 						Send
 					</button>
 				</form>
@@ -483,6 +527,41 @@
 
 	.peer-status.on {
 		color: #1a9e54;
+	}
+
+	.peer-status.bot {
+		color: #7c5c00;
+	}
+
+	.bot-badge {
+		display: inline-flex;
+		align-items: center;
+		flex-shrink: 0;
+		border-radius: 999px;
+		background: #fff3c4;
+		color: #7c5c00;
+		border: 1px solid #e3c66a;
+		font-size: 0.65rem;
+		font-weight: 800;
+		letter-spacing: 0.04em;
+		padding: 0.1rem 0.45rem;
+		white-space: nowrap;
+	}
+
+	.bot-label {
+		font-size: 0.72rem;
+		font-weight: 700;
+		color: #7c5c00;
+		white-space: nowrap;
+	}
+
+	.bot-dir-label {
+		margin: 0.35rem 0 0;
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--t-muted);
 	}
 
 	.chat-msg {

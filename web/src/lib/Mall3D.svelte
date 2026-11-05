@@ -22,6 +22,7 @@
 		type Vec2
 	} from '$lib/mall3d';
 	import { mallStores, type MallFriend } from '$lib/mall';
+	import { playClick, readSoundEnabled, writeSoundEnabled } from '$lib/mallSound';
 	import type { PresenceVisitor } from '$lib/presence.svelte';
 	import { closet } from '$lib/closet.svelte';
 	import {
@@ -46,6 +47,7 @@
 	let loadError = $state('');
 	let isTouch = $state(false);
 	let stick = $state({ active: false, ox: 0, oy: 0, dx: 0, dy: 0 });
+	let soundOn = $state(false);
 
 	const CAM_DIST = 8.0;
 	const CAM_H = 4.1;
@@ -775,6 +777,17 @@
 		'ArrowRight'
 	]);
 
+	function handleEnter(storeId: string): void {
+		playClick();
+		onEnter(storeId);
+	}
+
+	function toggleSound(): void {
+		soundOn = !soundOn;
+		writeSoundEnabled(soundOn);
+		if (soundOn) playClick();
+	}
+
 	function onKeyDown(e: KeyboardEvent): void {
 		if (e.target instanceof HTMLElement) {
 			const el = e.target;
@@ -786,7 +799,7 @@
 			e.preventDefault();
 		}
 		if (e.code === 'KeyE' && doorTarget) {
-			onEnter(doorTarget.id);
+			handleEnter(doorTarget.id);
 		}
 	}
 
@@ -972,6 +985,7 @@
 	}
 
 	onMount(() => {
+		soundOn = readSoundEnabled();
 		if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
 			reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 			isTouch = window.matchMedia('(pointer: coarse)').matches;
@@ -1105,12 +1119,23 @@
 			<title>You</title>
 		</circle>
 	</svg>
+	<button
+		type="button"
+		class="sound-toggle"
+		data-testid="sound-toggle"
+		aria-pressed={soundOn}
+		aria-label={soundOn ? 'Matikan suara' : 'Nyalakan suara'}
+		title={soundOn ? 'Matikan suara' : 'Nyalakan suara'}
+		onclick={toggleSound}
+	>
+		{soundOn ? '🔊' : '🔇'}
+	</button>
 	{#if doorTarget}
 		<button
 			type="button"
 			class="enter"
 			data-testid="enter-store"
-			onclick={() => doorTarget && onEnter(doorTarget.id)}
+			onclick={() => doorTarget && handleEnter(doorTarget.id)}
 		>
 			Enter {doorTarget.name} →
 		</button>
@@ -1182,6 +1207,24 @@
 		fill: #3b82f6;
 		stroke: #fff;
 		stroke-width: 1.5;
+	}
+
+	.sound-toggle {
+		position: absolute;
+		right: 0.8rem;
+		top: 0.8rem;
+		z-index: 5;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 44px;
+		height: 44px;
+		border: 1px solid rgba(255, 255, 255, 0.35);
+		border-radius: 50%;
+		background: rgba(12, 14, 18, 0.6);
+		font-size: 1.15rem;
+		line-height: 1;
+		cursor: pointer;
 	}
 
 	.hint {

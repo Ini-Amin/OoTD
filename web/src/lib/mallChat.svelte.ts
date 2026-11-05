@@ -1,6 +1,8 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { isBlocked, shouldThrottle } from './chatFilter';
+import { botDisplayName, botIdFromPeerId, botReplyFor, isBotPeerId } from './mallBots';
 import { HISTORY_LIMIT, mergeHistory, parseHistoryRow, type HistoryRow } from './mallChatHistory';
+import { mallFriends } from './mall';
 import { myDisplayName, presence } from './presence.svelte';
 import { getSupabase } from './supabase';
 
@@ -154,6 +156,10 @@ class MallChatStore {
 
 	/** Display name for a whisper thread (live roster name wins, else last seen). */
 	threadName(peerId: string): string {
+		if (isBotPeerId(peerId)) {
+			const bot = mallFriends.find((f) => `bot:${f.id}` === peerId);
+			return bot ? botDisplayName(bot.name) : botDisplayName('Bot');
+		}
 		const live = presence.visitors.find((v) => v.clientId === peerId);
 		if (live) return live.name;
 		return this.whisperNames[peerId] ?? 'Visitor';
@@ -229,6 +235,61 @@ class MallChatStore {
 			payload: { id, from: presence.clientId, fromName: name, to: peerId, text }
 		});
 		return res === 'ok';
+	}
+
+	/**
+	 * Demo-bot whisper: local only, no backend, works offline.
+	 * Pushes the user message, then a canned auto-reply shortly after.
+	 */
+	sendBotWhisper(peerId: string, raw: string): boolean {
+		const botId = botIdFromPeerId(peerId);
+		const text = raw.trim().slice(0, MAX_LEN);
+		if (!botId || !text) return false;
+		const rejection = this.#moderate(text);
+		if (rejection) {
+			this.lastRejection = rejection;
+			return false;
+		}
+		this.lastRejection = null;
+		const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+		const name = myDisplayName();
+		this.#seen.add(id);
+		this.whisperNames = { ...this.whisperNames, [peerId]: this.threadName(peerId) };
+		const thread = this.whispers[peerId] ?? [];
+		this.whispers = {
+			...this.whispers,
+			[peerId]: [
+				...thread.slice(-(MAX_MESSAGES - 1)),
+				{ id, name, text, mine: true, at: Date.now(), peerId }
+			]
+		};
+		const replyId = `${id}-bot`;
+		const pushReply = (): void => {
+			if (this.#seen.has(replyId)) return;
+			this.#seen.add(replyId);
+			const current = this.whispers[peerId] ?? [];
+			this.whispers = {
+				...this.whispers,
+				[peerId]: [
+					...current.slice(-(MAX_MESSAGES - 1)),
+					{
+						id: replyId,
+						name: this.threadName(peerId),
+						text: botReplyFor(botId, text),
+						mine: false,
+						at: Date.now(),
+						peerId
+					}
+				]
+			};
+			this.unread = { ...this.unread, [peerId]: (this.unread[peerId] ?? 0) + 1 };
+		};
+		if (typeof window !== 'undefined' && typeof window.setTimeout === 'function') {
+			window.setTimeout(pushReply, 600);
+		} else {
+			pushReply();
+		}
+		return true;
 	}
 }
 
