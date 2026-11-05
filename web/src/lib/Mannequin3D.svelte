@@ -97,6 +97,26 @@
 	}
 
 	/**
+	 * Snapshot the current frame for feed sharing. Renders synchronously and
+	 * captures in the same task, so no preserveDrawingBuffer is needed.
+	 * Returns null when WebGL is unavailable or the capture fails.
+	 */
+	export function captureSnapshot(): Promise<Blob | null> {
+		if (webglError || destroyed || !renderer || !scene || !camera) {
+			return Promise.resolve(null);
+		}
+		try {
+			renderer.render(scene, camera);
+			const canvas = renderer.domElement;
+			return new Promise((resolve) => {
+				canvas.toBlob((blob) => resolve(blob), 'image/png');
+			});
+		} catch {
+			return Promise.resolve(null);
+		}
+	}
+
+	/**
 	 * Resolve ANY CSS colour (including `color-mix(...)`, which the theme tokens
 	 * use) to concrete sRGB components.
 	 *

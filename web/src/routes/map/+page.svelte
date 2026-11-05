@@ -1,11 +1,16 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import Mannequin3D from '$lib/Mannequin3D.svelte';
 	import Mall3D from '$lib/Mall3D.svelte';
 	import CategoryIcon from '$lib/CategoryIcon.svelte';
 	import MallChat from '$lib/MallChat.svelte';
 	import { closet } from '$lib/closet.svelte';
 	import { presence } from '$lib/presence.svelte';
+	import { auth } from '$lib/auth.svelte';
+	import { createOutfit, uploadOutfitImage } from '$lib/outfits';
+	import { buildShareOutfitPayload } from '$lib/shareOutfit';
 	import { CATEGORIES, CATEGORY_LABEL, type Category, type ClosetPiece } from '$lib/pieces';
 	import {
 		mallFriends,
@@ -20,6 +25,8 @@
 
 	let insideId = $state<string | null>(null);
 	let notice = $state('');
+	let sharing = $state(false);
+	let mannequin = $state<{ captureSnapshot: () => Promise<Blob | null> } | null>(null);
 	let friends = $state<MallFriend[]>(mallFriends.map((f) => ({ ...f })));
 	let wanderTimer: ReturnType<typeof setInterval> | undefined;
 	/** Last 3D position, so leaving a store resumes where you stood. */
@@ -31,6 +38,7 @@
 
 	onMount(() => {
 		closet.init();
+		auth.init();
 		presence.connect();
 		presence.update(null);
 		// Friends wander the mall so the map feels alive.
@@ -97,6 +105,68 @@
 
 	function isWornSku(item: MallSku) {
 		return closet.worn[item.category] === `mall-${item.id}`;
+	}
+
+	let wornCount = $derived(CATEGORIES.filter((cat) => worn[cat]).length);
+	let shareDisabled = $derived(
+		sharing ||
+			!auth.ready ||
+			wornCount === 0 ||
+			(auth.session != null && auth.profile === undefined)
+	);
+
+	async function shareOutfit(store: MallStore) {
+		if (sharing) return;
+		if (!auth.ready) {
+			notice = 'Still loading. Try again in a moment.';
+			return;
+		}
+		if (!auth.session || !auth.token) {
+			await goto(`/login?next=${encodeURIComponent(page.url.pathname)}`);
+			return;
+		}
+		if (auth.profile === null) {
+			await goto('/welcome');
+			return;
+		}
+		if (auth.profile === undefined) {
+			notice = 'Still loading your profile. Try again in a moment.';
+			return;
+		}
+		const token = auth.token;
+		// Freeze what is worn at click time: rack chips stay enabled during
+		// the async snapshot/upload below, so the live `worn` derived could
+		// otherwise diverge from the snapshot photo.
+		const snapshotWorn = { ...worn };
+		sharing = true;
+		notice = 'Sharing your outfit…';
+		try {
+			// Snapshot and upload are best-effort: a capture failure or an
+			// unconfigured upload endpoint falls back to an imageless post.
+			let imageUrl: string | undefined;
+			try {
+				const blob = await mannequin?.captureSnapshot();
+				if (blob) {
+					const upload = await uploadOutfitImage(blob, token);
+					if (upload.ok) imageUrl = upload.imageUrl;
+				}
+			} catch {
+				// fall through to imageless post
+			}
+			const payload = buildShareOutfitPayload(snapshotWorn, store, imageUrl);
+			if (!payload) {
+				notice = 'Try on at least one piece first.';
+				return;
+			}
+			const created = await createOutfit(payload, token);
+			if (!created.ok) {
+				notice = created.error;
+				return;
+			}
+			await goto('/');
+		} finally {
+			sharing = false;
+		}
 	}
 </script>
 
@@ -165,7 +235,7 @@
 		<div class="store-layout">
 			<section class="try-col" aria-label="Try on">
 				<div class="viewport">
-					<Mannequin3D {worn} height="58vh" />
+					<Mannequin3D bind:this={mannequin} {worn} height="58vh" />
 				</div>
 				<p class="status" aria-live="polite">{notice || 'Pick a piece to try it on.'}</p>
 				<div class="worn-row">
@@ -184,6 +254,16 @@
 						</button>
 					{/each}
 				</div>
+				<button
+					type="button"
+					class="share-btn"
+					disabled={shareDisabled}
+					onclick={() => {
+						if (inside) shareOutfit(inside);
+					}}
+				>
+					{sharing ? 'Sharing…' : 'Share outfit to feed'}
+				</button>
 			</section>
 
 			<section class="rack-col" aria-label={`${inside.name} pieces`}>
@@ -389,6 +469,24 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		max-width: 10rem;
+	}
+
+	.share-btn {
+		margin-top: 0.85rem;
+		width: 100%;
+		border: 1px solid var(--t-accent);
+		background: var(--t-accent);
+		color: #fff;
+		border-radius: 999px;
+		padding: 0.6rem 1rem;
+		font-size: 0.88rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.share-btn:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
 	}
 
 	.rack {

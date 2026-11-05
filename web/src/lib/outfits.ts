@@ -32,6 +32,96 @@ export function ratioOf(o: Outfit): number {
 	return fallbackRatios[hash % fallbackRatios.length];
 }
 
+export type NewOutfitPiece = {
+	category: string;
+	label: string;
+	box: { x: number; y: number; w: number; h: number };
+};
+
+export type NewOutfitPayload = {
+	title: string;
+	caption: string;
+	tags: string[];
+	accent: string;
+	pieces: NewOutfitPiece[];
+	imageUrl?: string;
+};
+
+export type CreateOutfitResult =
+	| { ok: true; outfit: Outfit }
+	| { ok: false; error: string; status: number };
+
+/** POST /v1/outfits. Error strings mirror the /new form messages. */
+export async function createOutfit(
+	payload: NewOutfitPayload,
+	token: string
+): Promise<CreateOutfitResult> {
+	try {
+		const res = await fetch(`${apiBase}/v1/outfits`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+			body: JSON.stringify(payload)
+		});
+		if (res.status === 201) {
+			const data = (await res.json().catch(() => null)) as { outfit?: Outfit } | null;
+			if (data?.outfit && typeof data.outfit.id === 'string') {
+				return { ok: true, outfit: data.outfit };
+			}
+			return { ok: false, error: 'Server error (201).', status: 201 };
+		}
+		if (res.status === 401) {
+			return { ok: false, error: 'Your session expired. Sign in again.', status: 401 };
+		}
+		if (res.status === 400 || res.status === 404) {
+			const data = (await res.json().catch(() => ({}))) as { error?: string };
+			return { ok: false, error: data.error ?? 'Validation failed.', status: res.status };
+		}
+		return { ok: false, error: `Server error (${res.status}).`, status: res.status };
+	} catch {
+		return { ok: false, error: 'Network error: could not submit outfit.', status: 0 };
+	}
+}
+
+export type UploadImageResult =
+	| { ok: true; imageUrl: string }
+	| { ok: false; error: string; status: number };
+
+/** POST /v1/uploads (multipart `file` field). Error strings mirror the /new form. */
+export async function uploadOutfitImage(
+	blob: Blob,
+	token: string
+): Promise<UploadImageResult> {
+	try {
+		const form = new FormData();
+		form.append('file', blob, 'try-on.png');
+		const res = await fetch(`${apiBase}/v1/uploads`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${token}` },
+			body: form
+		});
+		if (res.status === 503) {
+			return { ok: false, error: 'Uploads are not configured on the server.', status: 503 };
+		}
+		if (res.status === 401) {
+			return { ok: false, error: 'Your session expired. Sign in again.', status: 401 };
+		}
+		if (res.status === 429) {
+			return { ok: false, error: 'Too many uploads. Try again in a bit.', status: 429 };
+		}
+		if (!res.ok) {
+			const data = (await res.json().catch(() => null)) as { error?: string } | null;
+			return { ok: false, error: data?.error ?? `Upload failed (${res.status}).`, status: res.status };
+		}
+		const data = (await res.json()) as { imageUrl?: string };
+		if (typeof data.imageUrl === 'string' && data.imageUrl.length > 0) {
+			return { ok: true, imageUrl: data.imageUrl };
+		}
+		return { ok: false, error: 'Upload failed.', status: res.status };
+	} catch {
+		return { ok: false, error: 'Upload failed. Check your connection and try again.', status: 0 };
+	}
+}
+
 export const previewOutfits: Outfit[] = [
 	{
 		id: 'look-001',
