@@ -164,8 +164,10 @@ func (c *Client) EstimatePrice(label, category, condition string) (string, error
 
 // StylistReply runs one turn of the AI Stylist chat.
 // history holds prior turns as {role, content} pairs (roles: user/assistant).
-func (c *Client) StylistReply(history [][2]string, userText string) (string, error) {
-	msgs := []chatMessage{textMsg("system", StylistSystemPrompt)}
+// closet holds sanitized owned pieces; empty/nil keeps the system prompt
+// byte-identical to StylistSystemPrompt.
+func (c *Client) StylistReply(history [][2]string, userText string, closet []ClosetPiece) (string, error) {
+	msgs := []chatMessage{textMsg("system", BuildStylistSystemPrompt(closet))}
 	for _, h := range history {
 		role := h[0]
 		if role != "user" && role != "assistant" {

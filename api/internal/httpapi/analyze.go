@@ -5,8 +5,12 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/ootd/ootd-api/internal/ai"
 )
 
 // Magic Tag + AI Stylist endpoints. Both require the AI client to be
@@ -150,6 +154,75 @@ type stylistInput struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
 	} `json:"history"`
+	// Closet is client-supplied (localStorage closet, no server table):
+	// category+label only. Optional; empty/missing degrades to generic advice.
+	Closet []stylistClosetPiece `json:"closet,omitempty"`
+}
+
+type stylistClosetPiece struct {
+	Category string `json:"category"`
+	Label    string `json:"label"`
+}
+
+const (
+	maxStylistClosetPieces = 30
+	maxStylistClosetLabel  = 80 // runes
+	maxStylistClosetChars  = 2000
+)
+
+// sanitizeCloset cleans client-supplied owned pieces for the stylist prompt.
+// Order is preserved (the frontend sends worn-first); invalid rows are
+// dropped silently so a dirty closet never breaks chat. Caps mirror the
+// frontend serializer so history(20x2000)+closet stays within limits.
+func sanitizeCloset(in []stylistClosetPiece) []ai.ClosetPiece {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ai.ClosetPiece, 0, len(in))
+	seen := map[ai.ClosetPiece]bool{}
+	// Seed with the rendered header+footer so the cap bounds the whole
+	// block, not just the lines. Rendering with zero pieces keeps this
+	// in sync with StylistClosetBlock by construction.
+	chars := len(ai.StylistClosetBlock(nil))
+	for _, p := range in {
+		if !pieceCategories[p.Category] {
+			continue
+		}
+		label := strings.Map(func(r rune) rune {
+			if r < 0x20 || r == 0x7f {
+				return -1
+			}
+			return r
+		}, p.Label)
+		label = strings.Join(strings.Fields(label), " ")
+		if label == "" {
+			continue
+		}
+		if utf8.RuneCountInString(label) > maxStylistClosetLabel {
+			label = string([]rune(label)[:maxStylistClosetLabel])
+			label = strings.TrimRight(label, " ")
+		}
+		if label == "" {
+			continue
+		}
+		clean := ai.ClosetPiece{Category: p.Category, Label: label}
+		if seen[clean] {
+			continue
+		}
+		// Serialized line cost: `- [<cat>] "<label>"\n` as the prompt renders
+		// it (the quotes are part of strconv.Quote's output, not overhead).
+		cost := len("- [] \n") + len(clean.Category) + len(strconv.Quote(clean.Label))
+		if len(out) >= maxStylistClosetPieces || chars+cost > maxStylistClosetChars {
+			break
+		}
+		chars += cost
+		seen[clean] = true
+		out = append(out, clean)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func (s *server) stylistChat(w http.ResponseWriter, r *http.Request, claims *authClaims) {
@@ -192,7 +265,7 @@ func (s *server) stylistChat(w http.ResponseWriter, r *http.Request, claims *aut
 		}
 		history = append(history, [2]string{h.Role, c})
 	}
-	reply, err := s.ai.StylistReply(history, text)
+	reply, err := s.ai.StylistReply(history, text, sanitizeCloset(in.Closet))
 	if err != nil {
 		serverError(w, err)
 		return

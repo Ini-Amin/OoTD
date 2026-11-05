@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { auth, authHeaders } from '$lib/auth.svelte';
 	import { apiBase } from '$lib/outfits';
+	import { closet } from '$lib/closet.svelte';
+	import { serializeClosetForStylist } from '$lib/stylistCloset';
 
 	type ChatMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -37,11 +39,23 @@
 		input = '';
 		const prior = messages.slice(-20);
 		messages = [...messages, { role: 'user', content: text }];
+		// Owned-pieces context: best-effort, never blocks send().
+		let closetPayload: ReturnType<typeof serializeClosetForStylist> = [];
+		try {
+			closet.init();
+			closetPayload = serializeClosetForStylist(closet.pieces, closet.worn);
+		} catch {
+			closetPayload = [];
+		}
 		try {
 			const res = await fetch(`${apiBase}/v1/stylist`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json', ...authHeaders() },
-				body: JSON.stringify({ message: text, history: prior })
+				body: JSON.stringify({
+					message: text,
+					history: prior,
+					...(closetPayload.length ? { closet: closetPayload } : {})
+				})
 			});
 			if (res.status === 503) {
 				error = 'AI Stylist is not configured on the server.';
