@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import Mannequin3D from '$lib/Mannequin3D.svelte';
+	import Mall3D from '$lib/Mall3D.svelte';
 	import CategoryIcon from '$lib/CategoryIcon.svelte';
 	import MallChat from '$lib/MallChat.svelte';
 	import { closet } from '$lib/closet.svelte';
@@ -9,21 +10,20 @@
 	import {
 		mallFriends,
 		mallStores,
-		mallYouStart,
 		skuToClosetPiece,
 		storeById,
 		type MallFriend,
 		type MallSku,
 		type MallStore
 	} from '$lib/mall';
+	import type { Vec2 } from '$lib/mall3d';
 
-	let you = $state({ x: mallYouStart.x, y: mallYouStart.y });
 	let insideId = $state<string | null>(null);
 	let notice = $state('');
 	let friends = $state<MallFriend[]>(mallFriends.map((f) => ({ ...f })));
-	let walkingTo = $state<string | null>(null);
-	let walkTimer: ReturnType<typeof setTimeout> | undefined;
 	let wanderTimer: ReturnType<typeof setInterval> | undefined;
+	/** Last 3D position, so leaving a store resumes where you stood. */
+	let lastPos = $state<Vec2 | null>(null);
 
 	function friendsHere(storeId: string): MallFriend[] {
 		return friends.filter((f) => f.storeId === storeId);
@@ -32,7 +32,7 @@
 	onMount(() => {
 		closet.init();
 		presence.connect();
-		presence.update(insideId);
+		presence.update(null);
 		// Friends wander the mall so the map feels alive.
 		wanderTimer = setInterval(() => {
 			friends = friends.map((f) =>
@@ -43,12 +43,13 @@
 		}, 7000);
 		return () => {
 			clearInterval(wanderTimer);
-			clearTimeout(walkTimer);
 			presence.disconnect();
 		};
 	});
 
-	// Re-track presence on enter/leave (walk is tracked in walkToStore).
+	// Re-track the roster entry on enter/leave. Live 3D positions flow over
+	// broadcast through handlePlayerMove (the server closes channels that
+	// track repeatedly).
 	$effect(() => {
 		presence.update(insideId);
 	});
@@ -67,55 +68,15 @@
 		return map;
 	});
 
-	function storeCenter(store: MallStore) {
-		return { x: store.x + store.w / 2, y: store.y + store.h / 2 };
-	}
-
-	function friendSpot(storeId: string, index: number) {
-		const store = storeById(storeId);
-		if (!store) return { x: 50, y: 50 };
-		return {
-			x: store.x + store.w - 6 - index * 1.2,
-			y: store.y + 5
-		};
-	}
-
-	function visitorSpot(storeId: string | null, index: number) {
-		if (storeId) {
-			const store = storeById(storeId);
-			if (store) {
-				// Offset past the simulated friend dots so rings never overlap them.
-				return {
-					x: store.x + store.w - 6 - (friendsHere(storeId).length + index) * 1.2,
-					y: store.y + 5
-				};
-			}
-		}
-		// Wandering the atrium concourse: deterministic spread from the index.
-		const spread = [0, 2.2, -2.2, 4.4, -4.4, 6.4, -6.4, 8.4, -8.4, 10.4];
-		return { x: 50 + (spread[index % spread.length] ?? 0), y: 31 };
-	}
-
-	function walkToStore(store: MallStore) {
-		clearTimeout(walkTimer);
-		you = storeCenter(store);
-		presence.update(null);
-		const reduced =
-			typeof window !== 'undefined' &&
-			typeof window.matchMedia === 'function' &&
-			window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-		if (reduced) {
-			enterNow(store);
-			return;
-		}
-		walkingTo = store.name;
-		walkTimer = setTimeout(() => enterNow(store), 650);
-	}
-
-	function enterNow(store: MallStore) {
-		walkingTo = null;
-		insideId = store.id;
+	function enterStore(storeId: string) {
+		if (!storeById(storeId)) return;
+		insideId = storeId;
 		notice = '';
+	}
+
+	function handlePlayerMove(pos: Vec2) {
+		lastPos = pos;
+		presence.sendPos(pos.x, pos.z);
 	}
 
 	function leaveStore() {
@@ -149,8 +110,9 @@
 			<p class="kicker">Prototype</p>
 			<h1>Fashion mall</h1>
 			<p class="lede">
-				Tap a store to walk over and try pieces on your mannequin. Friends wander
-				the mall as dots — say hi in the mall chat and style together.
+				Walk the mall in 3D — step onto a glowing door pad and enter the store
+				to try pieces on. Friends wander the floor; say hi in the mall chat
+				and style together.
 			</p>
 			<p class="disclaimer">
 				Sample store names for the prototype only. Not affiliated with these brands.
@@ -160,75 +122,25 @@
 		<div class="map-shell">
 			<div class="map-grid">
 				<div class="map-col">
-			<div class="map-stage" role="application" aria-label="Mall floor plan">
-				<svg class="floor" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-					<rect class="atrium" x="32" y="27" width="36" height="8" rx="4" />
-					<text class="atrium-label" x="50" y="32.4" text-anchor="middle">Atrium</text>
-					<rect class="path" x="48.5" y="35" width="3" height="27" rx="1.5" />
-					<rect class="path" x="4" y="62" width="92" height="5" rx="2.5" />
-					<line class="path-line" x1="50" y1="36.5" x2="50" y2="60.5" />
-					<line class="path-line" x1="6" y1="64.5" x2="94" y2="64.5" />
-				</svg>
-
-				{#each mallStores as store (store.id)}
-					<button
-						type="button"
-						class="store-pad"
-						style={`left:${store.x}%;top:${store.y}%;width:${store.w}%;height:${store.h}%;--store:${store.color}`}
-						onclick={() => walkToStore(store)}
-					>
-						<span class="store-kind">{store.kind}</span>
-						<span class="store-name">{store.name}</span>
-						<span class="store-count">{store.skus.length} pieces</span>
-						{#if friendsHere(store.id).length}
-							<span class="store-friends"
-								>{friendsHere(store.id).length} friend{friendsHere(store.id).length > 1
-									? 's'
-									: ''} here</span
-							>
-						{/if}
-					</button>
-				{/each}
-
-				{#each friends as friend (friend.id)}
-					{@const spot = friendSpot(friend.storeId, friendsHere(friend.storeId).indexOf(friend))}
-					<div
-						class="pin friend"
-						style={`left:${spot.x}%;top:${spot.y}%;--hue:${friend.hue}`}
-						title={`${friend.name} — ${friend.note}`}
-					>
-						<span>{friend.name.charAt(0)}</span>
-					</div>
-				{/each}
-
-				{#each liveVisitors as visitor, i (visitor.clientId)}
-					{@const vspot = visitorSpot(visitor.storeId, i)}
-					<div
-						class="pin visitor"
-						style={`left:${vspot.x}%;top:${vspot.y}%;--hue:${visitor.hue}`}
-						title={`${visitor.name} — here now`}
-					>
-						<span>{visitor.name.charAt(0)}</span>
-					</div>
-				{/each}
-
-				<div class="pin you" style={`left:${you.x}%;top:${you.y}%`} title="You">
-					<span>You</span>
+				<div class="stage3d" role="application" aria-label="Walkable 3D mall">
+					<Mall3D
+						{friends}
+						visitors={liveVisitors}
+						startPos={lastPos}
+						onEnter={enterStore}
+						onMove={handlePlayerMove}
+					/>
 				</div>
-				{#if walkingTo}
-					<p class="walking">Walking to {walkingTo}…</p>
-				{/if}
+
+				<ul class="legend">
+					<li><span class="dot you-dot"></span> You</li>
+					<li><span class="dot friend-dot"></span> Friends (demo)</li>
+					{#if presence.status === 'live'}
+						<li><span class="dot visitor-dot"></span> Here now: {liveVisitors.length}</li>
+					{/if}
+					<li>Walk to a glowing door pad to enter a store</li>
+				</ul>
 			</div>
-
-			<ul class="legend">
-				<li><span class="dot you-dot"></span> You</li>
-				<li><span class="dot friend-dot"></span> Friends (demo)</li>
-				{#if presence.status === 'live'}
-					<li><span class="dot visitor-dot"></span> Here now: {liveVisitors.length}</li>
-				{/if}
-				<li>Tap a store to walk in and try on</li>
-			</ul>
-				</div>
 				<MallChat />
 			</div>
 		</div>
@@ -371,155 +283,18 @@
 		min-width: 0;
 	}
 
-	.walking {
-		position: absolute;
-		left: 0.9rem;
-		bottom: 0.9rem;
-		z-index: 6;
-		margin: 0;
-		padding: 0.45rem 0.8rem;
-		border-radius: 999px;
-		background: var(--t-fg);
-		color: var(--t-bg);
-		font-size: 0.78rem;
-		font-weight: 600;
-	}
-
 	.store-chat {
 		margin-top: 1rem;
 	}
 
-	.map-stage {
+	.stage3d {
 		position: relative;
 		width: 100%;
-		aspect-ratio: 1.35 / 1;
-		min-height: 28rem;
+		height: clamp(30rem, 68vh, 46rem);
 		border: 1px solid var(--t-line);
 		border-radius: var(--t-radius);
-		background:
-			radial-gradient(circle at 50% 33%, color-mix(in srgb, var(--t-accent) 12%, var(--t-tint)), transparent 42%),
-			var(--t-tint);
+		background: #e9e4d8;
 		overflow: hidden;
-	}
-
-	.floor {
-		position: absolute;
-		inset: 0;
-		width: 100%;
-		height: 100%;
-	}
-
-	.atrium {
-		fill: color-mix(in srgb, var(--t-surface) 80%, var(--t-accent));
-		stroke: var(--t-line);
-		stroke-width: 0.25;
-	}
-
-	.atrium-label {
-		fill: var(--t-muted);
-		font-size: 3.2px;
-		letter-spacing: 0.2px;
-	}
-
-	.path {
-		fill: color-mix(in srgb, var(--t-surface) 70%, var(--t-bg));
-	}
-
-	.path-line {
-		fill: none;
-		stroke: var(--t-line);
-		stroke-width: 0.4;
-		stroke-dasharray: 1.5 1.2;
-		opacity: 0.8;
-	}
-
-	.store-pad {
-		position: absolute;
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		justify-content: flex-end;
-		gap: 0.15rem;
-		padding: 0.55rem 0.65rem;
-		border: 1px solid color-mix(in srgb, var(--store) 35%, var(--t-line));
-		border-top: 3px solid var(--store);
-		border-radius: calc(var(--t-radius) * 0.55);
-		background: color-mix(in srgb, var(--store) 14%, var(--t-surface));
-		color: var(--t-fg);
-		text-align: left;
-		cursor: pointer;
-		transition: transform 0.15s ease, box-shadow 0.15s ease;
-	}
-
-	.store-pad:hover,
-	.store-pad:focus-visible {
-		transform: translateY(-2px);
-		box-shadow: 0 8px 20px color-mix(in srgb, var(--store) 22%, transparent);
-		outline: 2px solid var(--store);
-		outline-offset: 1px;
-		z-index: 2;
-	}
-
-	.store-kind {
-		font-size: 0.65rem;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: var(--t-muted);
-	}
-
-	.store-name {
-		font-weight: 700;
-		font-size: 0.92rem;
-		letter-spacing: -0.03em;
-	}
-
-	.store-friends {
-		font-size: 0.68rem;
-		color: var(--t-accent);
-	}
-
-	.store-count {
-		font-size: 0.68rem;
-		color: var(--t-muted);
-	}
-
-	.pin {
-		position: absolute;
-		transform: translate(-50%, -50%);
-		z-index: 4;
-		pointer-events: none;
-		transition: left 0.6s ease, top 0.6s ease;
-	}
-
-	.pin span {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		min-width: 1.7rem;
-		height: 1.7rem;
-		padding: 0 0.4rem;
-		border-radius: 999px;
-		font-size: 0.65rem;
-		font-weight: 700;
-		border: 2px solid var(--t-surface);
-	}
-
-	.pin.you span {
-		background: var(--t-fg);
-		color: var(--t-bg);
-	}
-
-	.pin.friend span {
-		background: hsl(var(--hue) 70% 46%);
-		color: white;
-	}
-
-	/* Real visitors: light dot with a colored ring, distinct from solid friend dots. */
-	.pin.visitor span {
-		background: var(--t-surface);
-		color: hsl(var(--hue) 70% 32%);
-		border: 2px solid hsl(var(--hue) 70% 46%);
-		box-shadow: 0 0 0 3px color-mix(in srgb, hsl(var(--hue) 70% 46%) 28%, transparent);
 	}
 
 	.legend {
@@ -699,9 +474,8 @@
 			width: calc(100% - 1.5rem);
 		}
 
-		.map-stage {
-			aspect-ratio: 0.85 / 1;
-			min-height: 34rem;
+		.stage3d {
+			height: clamp(26rem, 62vh, 38rem);
 		}
 
 		.store-layout {
@@ -714,17 +488,6 @@
 
 		.guests {
 			margin-left: 0;
-		}
-
-		.store-name {
-			font-size: 0.78rem;
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.store-pad,
-		.pin {
-			transition: none;
 		}
 	}
 </style>
