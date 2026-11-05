@@ -7,12 +7,14 @@
 	import CategoryIcon from '$lib/CategoryIcon.svelte';
 	import MallChat from '$lib/MallChat.svelte';
 	import { closet } from '$lib/closet.svelte';
+	import { wishlist } from '$lib/wishlist.svelte';
 	import { presence } from '$lib/presence.svelte';
 	import { auth } from '$lib/auth.svelte';
 	import { createOutfit, uploadOutfitImage } from '$lib/outfits';
 	import { buildShareOutfitPayload } from '$lib/shareOutfit';
 	import { CATEGORIES, CATEGORY_LABEL, type Category, type ClosetPiece } from '$lib/pieces';
 	import {
+		findSkuAny,
 		mallFriends,
 		mallStores,
 		skuToClosetPiece,
@@ -38,6 +40,7 @@
 
 	onMount(() => {
 		closet.init();
+		wishlist.init();
 		auth.init();
 		presence.connect();
 		presence.update(null);
@@ -105,6 +108,28 @@
 
 	function isWornSku(item: MallSku) {
 		return closet.worn[item.category] === `mall-${item.id}`;
+	}
+
+	function isWishlisted(item: MallSku) {
+		return wishlist.has(item.id);
+	}
+
+	function toggleWish(store: MallStore, item: MallSku) {
+		wishlist.toggle(item.id, store.id);
+		notice = wishlist.has(item.id)
+			? `Saved ${item.label} to your wishlist`
+			: `Removed ${item.label} from your wishlist`;
+	}
+
+	/** Resolve a worn closet piece back to its mall SKU (non-mall pieces → undefined). */
+	function mallSkuOf(piece: ClosetPiece | undefined) {
+		if (!piece?.id.startsWith('mall-')) return undefined;
+		return findSkuAny(piece.id.slice('mall-'.length));
+	}
+
+	function toggleWishPiece(piece: ClosetPiece) {
+		const found = mallSkuOf(piece);
+		if (found) toggleWish(found.store, found.sku);
 	}
 
 	let wornCount = $derived(CATEGORIES.filter((cat) => worn[cat]).length);
@@ -218,6 +243,9 @@
 				<h1>{inside.name}</h1>
 				<p class="lede">{inside.blurb}</p>
 			</div>
+			<a class="wish-link" href="/wishlist">
+				Wishlist{#if wishlist.count} ({wishlist.count}){/if}
+			</a>
 			{#if guests.length}
 				<p class="guests">
 					{guests.map((g) => g.name).join(', ')}
@@ -241,17 +269,36 @@
 				<div class="worn-row">
 					{#each CATEGORIES as cat (cat)}
 						{@const piece = worn[cat]}
-						<button
-							type="button"
-							class="worn-chip"
-							class:empty={!piece}
-							disabled={!piece}
-							onclick={() => takeOff(cat)}
-							title={piece ? `Take off ${piece.label}` : CATEGORY_LABEL[cat]}
-						>
-							<CategoryIcon category={cat} size={14} />
-							<span>{piece ? piece.label.replace(/^.*· /, '') : CATEGORY_LABEL[cat]}</span>
-						</button>
+						{@const mall = mallSkuOf(piece)}
+						<span class="worn-group">
+							<button
+								type="button"
+								class="worn-chip"
+								class:empty={!piece}
+								disabled={!piece}
+								onclick={() => takeOff(cat)}
+								title={piece ? `Take off ${piece.label}` : CATEGORY_LABEL[cat]}
+							>
+								<CategoryIcon category={cat} size={14} />
+								<span>{piece ? piece.label.replace(/^.*· /, '') : CATEGORY_LABEL[cat]}</span>
+							</button>
+							{#if piece && mall}
+								{@const saved = wishlist.has(mall.sku.id)}
+								<button
+									type="button"
+									class="chip-save"
+									class:saved
+									aria-pressed={saved}
+									aria-label={saved
+										? `Remove ${mall.sku.label} from wishlist`
+										: `Save ${mall.sku.label} to wishlist`}
+									title={saved ? 'Saved to wishlist' : 'Save to wishlist'}
+									onclick={() => toggleWishPiece(piece)}
+								>
+									{saved ? '♥' : '♡'}
+								</button>
+							{/if}
+						</span>
 					{/each}
 				</div>
 				<button
@@ -271,23 +318,40 @@
 				<div class="rack">
 					{#each inside.skus as item (item.id)}
 						{@const on = isWornSku(item)}
-						<button
-							type="button"
-							class="sku"
-							class:on
-							aria-pressed={on}
-							onclick={() => {
-								if (inside) tryOn(inside, item);
-							}}
-						>
-							<img src={item.imageUrl} alt="" width="200" height="260" />
-							<div class="sku-meta">
-								<span class="sku-cat">{CATEGORY_LABEL[item.category]}</span>
-								<strong>{item.label}</strong>
-								<span class="sku-price">{item.price}</span>
-								<span class="sku-cta">{on ? 'On you' : 'Try on'}</span>
-							</div>
-						</button>
+						{@const saved = isWishlisted(item)}
+						<div class="sku" class:on>
+							<button
+								type="button"
+								class="sku-try"
+								aria-pressed={on}
+								aria-label={`${on ? 'Wearing' : 'Try on'} ${item.label}`}
+								onclick={() => {
+									if (inside) tryOn(inside, item);
+								}}
+							>
+								<img src={item.imageUrl} alt="" width="200" height="260" />
+								<div class="sku-meta">
+									<span class="sku-cat">{CATEGORY_LABEL[item.category]}</span>
+									<strong>{item.label}</strong>
+									<span class="sku-price">{item.price}</span>
+									<span class="sku-cta">{on ? 'On you' : 'Try on'}</span>
+								</div>
+							</button>
+							<button
+								type="button"
+								class="save-btn"
+								class:saved
+								aria-pressed={saved}
+								aria-label={saved
+									? `Remove ${item.label} from wishlist`
+									: `Save ${item.label} to wishlist`}
+								onclick={() => {
+									if (inside) toggleWish(inside, item);
+								}}
+							>
+								{saved ? '♥ Saved' : '♡ Save'}
+							</button>
+						</div>
 					{/each}
 				</div>
 				<p class="hint">Tried pieces stay in your closet on the Mannequin page.</p>
@@ -493,6 +557,68 @@
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 0.75rem;
+	}
+
+	.sku-try {
+		display: flex;
+		flex-direction: column;
+		width: 100%;
+		padding: 0;
+		border: 0;
+		background: none;
+		color: inherit;
+		text-align: left;
+	}
+
+	.save-btn {
+		margin: 0 0.7rem 0.7rem;
+		border: 1px solid var(--t-line);
+		background: var(--t-tint);
+		color: var(--t-fg);
+		border-radius: 999px;
+		padding: 0.35rem 0.7rem;
+		font-size: 0.78rem;
+		font-weight: 600;
+	}
+
+	.save-btn.saved {
+		border-color: var(--t-accent);
+		color: var(--t-accent);
+	}
+
+	.worn-group {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.2rem;
+	}
+
+	.chip-save {
+		border: 1px solid var(--t-line);
+		background: var(--t-surface);
+		color: var(--t-muted);
+		border-radius: 999px;
+		width: 1.55rem;
+		height: 1.55rem;
+		line-height: 1;
+		font-size: 0.8rem;
+		padding: 0;
+	}
+
+	.chip-save.saved {
+		border-color: var(--t-accent);
+		color: var(--t-accent);
+	}
+
+	.wish-link {
+		margin-left: auto;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--t-accent);
+		text-decoration: none;
+		border: 1px solid var(--t-line);
+		border-radius: 999px;
+		padding: 0.4rem 0.85rem;
+		background: var(--t-surface);
 	}
 
 	.sku {

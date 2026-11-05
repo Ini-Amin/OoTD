@@ -7,6 +7,7 @@
 	import { theme } from '$lib/theme.svelte';
 	import { saved } from '$lib/saved.svelte';
 	import { closet } from '$lib/closet.svelte';
+	import { wishlist } from '$lib/wishlist.svelte';
 	import { apiBase } from '$lib/outfits';
 	import StylistChat from '$lib/StylistChat.svelte';
 	import { auth } from '$lib/auth.svelte';
@@ -21,6 +22,7 @@
 	let isMap = $derived(pathname.startsWith('/map'));
 	let isMannequin = $derived(pathname.startsWith('/mannequin'));
 	let isSaved = $derived(pathname.startsWith('/saved'));
+	let isWishlist = $derived(pathname.startsWith('/wishlist'));
 	let isMakers = $derived(pathname.startsWith('/makers'));
 	let maker = $derived(isMakerProfile(auth.profile));
 	// Shared with the /makers dashboard, which pushes its locally-known
@@ -49,6 +51,7 @@
 		theme.init(apiBase);
 		saved.init();
 		closet.init();
+		wishlist.init();
 		const onFocus = () => {
 			void makerInbox.refresh();
 		};
@@ -201,6 +204,21 @@
 				<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
 				<circle cx="12" cy="7" r="4" />
 			</svg>
+		</a>
+		<a
+			href="/wishlist"
+			class="rail-item"
+			class:active={isWishlist}
+			aria-current={isWishlist ? 'page' : undefined}
+			aria-label={wishlist.count > 0 ? `Wishlist, ${wishlist.count} saved` : 'Wishlist'}
+			title="Wishlist"
+		>
+			<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+				<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21.2l7.8-7.8 1-1a5.5 5.5 0 0 0 0-7.8z" />
+			</svg>
+			{#if wishlist.count > 0}
+				<span class="rail-badge" aria-hidden="true">{wishlist.count > 99 ? '99+' : wishlist.count}</span>
+			{/if}
 		</a>
 		{#if maker}
 			<a

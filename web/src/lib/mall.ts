@@ -267,6 +267,22 @@ export function storeById(id: string | null | undefined): MallStore | undefined 
 	return mallStores.find((s) => s.id === id);
 }
 
+export function findSku(
+	storeId: string | null | undefined,
+	skuId: string
+): MallSku | undefined {
+	return storeById(storeId)?.skus.find((s) => s.id === skuId);
+}
+
+/** Resolve a SKU id across all stores (wishlist entries, worn mall pieces). */
+export function findSkuAny(skuId: string): { store: MallStore; sku: MallSku } | undefined {
+	for (const store of mallStores) {
+		const sku = store.skus.find((s) => s.id === skuId);
+		if (sku) return { store, sku };
+	}
+	return undefined;
+}
+
 export function friendsInStore(storeId: string): MallFriend[] {
 	return mallFriends.filter((f) => f.storeId === storeId);
 }
