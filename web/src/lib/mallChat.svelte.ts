@@ -1,4 +1,5 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
+import { isBlocked, shouldThrottle } from './chatFilter';
 import { myDisplayName, presence } from './presence.svelte';
 import { getSupabase } from './supabase';
 
@@ -27,8 +28,11 @@ class MallChatStore {
 	/** Unread counts: 'mall' plus one per peer clientId. */
 	unread = $state<Record<string, number>>({});
 	status = $state<MallChatStatus>('connecting');
+	/** Honest rejection reason shown to the sender when moderation blocks a send. */
+	lastRejection = $state<string | null>(null);
 	#channel: RealtimeChannel | null = null;
 	#seen = new Set<string>();
+	#sendHistory: number[] = [];
 
 	connect(): void {
 		if (typeof window === 'undefined' || this.#channel) return;
@@ -130,9 +134,25 @@ class MallChatStore {
 		return this.whisperNames[peerId] ?? 'Visitor';
 	}
 
+	/** Moderation gate shared by send() and sendWhisper(). Null = allowed. */
+	#moderate(text: string): string | null {
+		if (isBlocked(text)) return 'Pesan ditolak: kata tidak pantas.';
+		const now = Date.now();
+		if (shouldThrottle(this.#sendHistory, now))
+			return 'Pesan ditolak: terlalu cepat, tunggu sebentar.';
+		this.#sendHistory = [...this.#sendHistory.slice(-4), now];
+		return null;
+	}
+
 	async send(raw: string): Promise<boolean> {
 		const text = raw.trim().slice(0, MAX_LEN);
 		if (!text || !this.#channel || this.status !== 'live') return false;
+		const rejection = this.#moderate(text);
+		if (rejection) {
+			this.lastRejection = rejection;
+			return false;
+		}
+		this.lastRejection = null;
 		const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 		const name = myDisplayName();
 		this.#seen.add(id);
@@ -147,6 +167,12 @@ class MallChatStore {
 	async sendWhisper(peerId: string, peerName: string, raw: string): Promise<boolean> {
 		const text = raw.trim().slice(0, MAX_LEN);
 		if (!text || !peerId || !this.#channel || this.status !== 'live') return false;
+		const rejection = this.#moderate(text);
+		if (rejection) {
+			this.lastRejection = rejection;
+			return false;
+		}
+		this.lastRejection = null;
 		const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 		const name = myDisplayName();
 		this.#seen.add(id);

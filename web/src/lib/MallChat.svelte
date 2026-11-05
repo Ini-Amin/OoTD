@@ -67,11 +67,13 @@
 		if (tab === 'whisper' && !peerId) return;
 		sending = true;
 		input = '';
+		let ok: boolean;
 		if (tab === 'whisper' && peerId) {
-			await mallChat.sendWhisper(peerId, peerName, text);
+			ok = await mallChat.sendWhisper(peerId, peerName, text);
 		} else {
-			await mallChat.send(text);
+			ok = await mallChat.send(text);
 		}
+		if (!ok && mallChat.lastRejection) input = text;
 		sending = false;
 	}
 
@@ -156,6 +158,9 @@
 					</p>
 				{/each}
 			</div>
+			{#if mallChat.lastRejection}
+				<p class="chat-reject" role="alert">{mallChat.lastRejection}</p>
+			{/if}
 			<form
 				class="chat-form"
 				onsubmit={(e) => {
@@ -214,6 +219,9 @@
 						</p>
 					{/each}
 				</div>
+				{#if mallChat.lastRejection}
+					<p class="chat-reject" role="alert">{mallChat.lastRejection}</p>
+				{/if}
 				<form
 					class="chat-form"
 					onsubmit={(e) => {
@@ -509,6 +517,15 @@
 		text-decoration: none;
 		padding: 0.55rem 1rem;
 		align-self: flex-start;
+	}
+
+	.chat-reject {
+		margin: 0;
+		padding: 0.45rem 0.9rem;
+		border-top: 1px solid var(--t-line);
+		color: #b3261e;
+		font-size: 0.78rem;
+		font-weight: 600;
 	}
 
 	.chat-form {
