@@ -1,7 +1,9 @@
 import { isCategory, type Category, type ClosetPiece } from '$lib/pieces';
 
-const PIECES_KEY = 'ootd-closet';
-const WORN_KEY = 'ootd-worn';
+// v2: drops pre-fix entries whose boxes were DEFAULT_BOX guesses (face crops).
+// Server-side outfit saves are unaffected; mall try-ons re-add in seconds.
+const PIECES_KEY = 'ootd-closet-v2';
+const WORN_KEY = 'ootd-worn-v2';
 
 function isPiece(v: unknown): v is ClosetPiece {
 	if (typeof v !== 'object' || v === null) return false;

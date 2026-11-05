@@ -10,6 +10,7 @@
 		setCachedPieces,
 		toValidPiece
 	} from '$lib/pieceCache';
+	import { decideSavePiece } from '$lib/saveGate';
 	import { apiBase, previewOutfits, ratioOf, type Outfit } from '$lib/outfits';
 	import CategoryIcon from '$lib/CategoryIcon.svelte';
 
@@ -37,6 +38,13 @@
 	// background /v1/analyze call). Scoped by outfit id so a slow response
 	// can never leak boxes into another outfit.
 	let autoTag = $state<{ outfitId: string; pieces: Piece[] } | null>(null);
+
+	// Tagging lifecycle for THIS outfit id. togglePiece waits for an
+	// in-flight attempt so saves never store DEFAULT_BOX guesses (face crops).
+	let autoTagState = $state<{ outfitId: string; status: 'tagging' | 'done' | 'failed' } | null>(
+		null
+	);
+	let autoTagPromise: Promise<void> | null = null;
 
 	let isSaved = $derived(outfit ? saved.has(outfit.id) : false);
 	let saveCount = $derived(outfit ? outfit.savedBy + (isSaved ? 1 : 0) : 0);
@@ -94,20 +102,52 @@
 		}, 4000);
 	}
 
-	function togglePiece(piece: Piece) {
+	async function togglePiece(piece: Piece) {
 		if (!outfit || !outfit.imageUrl || !outfit.imageUrl.trim() || imageError) return;
 		if (closet.has(piece.id)) {
 			closet.remove(piece.id);
 			showToast('Removed');
-		} else {
-			closet.add({
-				...piece,
-				outfitId: outfit.id,
-				outfitTitle: outfit.title,
-				imageUrl: outfit.imageUrl
-			});
-			showToast(`Saved ${piece.label} to your closet`, '/mannequin', 'Open mannequin');
+			return;
 		}
+		// Only real AI boxes may be saved. Synthetic DEFAULT_BOX guesses put
+		// faces on the mannequin torso, so they are never stored.
+		const outfitId = outfit.id;
+		const tagging =
+			autoTagState?.outfitId === outfitId && autoTagState.status === 'tagging'
+				? autoTagPromise
+				: null;
+		const decision = decideSavePiece({
+			hasTaggedPieces,
+			authed: !!auth.token,
+			taggingInFlight: !!tagging
+		});
+		let toSave = piece;
+		if (decision.action === 'refuse') {
+			showToast(
+				decision.reason === 'signin'
+					? 'Sign in so AI can tag the pieces first'
+					: 'AI could not tag this photo — try an outfit photo'
+			);
+			return;
+		}
+		if (decision.action === 'wait' && tagging) {
+			showToast('Waiting for AI tagging…');
+			await tagging;
+			if (!outfit || outfit.id !== outfitId || !hasTaggedPieces) {
+				showToast('AI could not tag this photo — try an outfit photo');
+				return;
+			}
+			const fresh = pieces.find((p) => p.category === piece.category);
+			if (!fresh) return;
+			toSave = fresh;
+		}
+		closet.add({
+			...toSave,
+			outfitId: outfit.id,
+			outfitTitle: outfit.title,
+			imageUrl: outfit.imageUrl
+		});
+		showToast(`Saved ${toSave.label} to your closet`, '/mannequin', 'Open mannequin');
 	}
 
 	async function handleShare() {
@@ -155,25 +195,36 @@
 	// failure (401/429/503/network, empty/invalid pieces) keeps the current
 	// untagged behavior with no error UI.
 	async function autoTagOutfit(outfitId: string, imageUrl: string) {
+		const finish = (status: 'done' | 'failed') => {
+			if (autoTagState?.outfitId === outfitId) autoTagState = { outfitId, status };
+		};
 		try {
 			const res = await fetch(`${apiBase}/v1/analyze`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json', ...authHeaders() },
 				body: JSON.stringify({ image_url: imageUrl })
 			});
-			if (!res.ok) return;
+			if (!res.ok) {
+				finish('failed');
+				return;
+			}
 			const data = (await res.json()) as { pieces?: AnalyzePiece[] };
 			const mapped: Piece[] = [];
 			for (const item of data.pieces ?? []) {
 				const piece = toValidPiece(outfitId, { ...item, ...(item.box ?? {}) });
 				if (piece) mapped.push(piece);
 			}
-			if (mapped.length === 0) return;
+			if (mapped.length === 0) {
+				finish('failed');
+				return;
+			}
 			setCachedPieces(outfitId, mapped);
 			if (outfit?.id === outfitId) {
 				autoTag = { outfitId, pieces: mapped };
 			}
+			finish('done');
 		} catch {
+			finish('failed');
 			// Silent: keep untagged behavior.
 		}
 	}
@@ -254,7 +305,8 @@
 		if (!url.toLowerCase().startsWith('https://')) return;
 		if (!auth.token) return;
 		if (!claimAutoTagAttempt(current.id)) return;
-		void autoTagOutfit(current.id, url);
+		autoTagState = { outfitId: current.id, status: 'tagging' };
+		autoTagPromise = autoTagOutfit(current.id, url);
 	});
 </script>
 
