@@ -96,6 +96,49 @@ POST /v1/requests        (craftsmaker request)
 
 The frontend shows preview data when the API is not running, then automatically uses the API when it becomes available.
 
+## MCP server
+
+`api/cmd/mcp` exposes one MCP tool over stdio — `identify_outfit` — so an AI
+assistant can identify garments in an outfit photo. It reuses the same
+`internal/ai` client as `POST /v1/analyze` (no duplicated AI logic) and
+returns `{pieces: [{category, label, description}]}`. There is no price data
+in this repo, so every piece reports `"price": null` with a `price_note`
+explaining a catalog is needed — prices are never invented.
+
+Build:
+
+```sh
+cd api
+go build -o /tmp/ootd-mcp ./cmd/mcp
+```
+
+Required env (same AI settings as the API; no database needed):
+
+```text
+AI_BASE_URL      e.g. https://api.meta.ai/v1
+AI_API_KEY       secret key
+AI_VISION_MODEL  e.g. muse-spark-1.3
+AI_CHAT_MODEL    e.g. muse-spark-1.3
+```
+
+Claude Code (`~/.claude.json` or project `.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "ootd-outfit": {
+      "command": "/tmp/ootd-mcp",
+      "env": {
+        "AI_BASE_URL": "https://api.meta.ai/v1",
+        "AI_API_KEY": "...",
+        "AI_VISION_MODEL": "muse-spark-1.3",
+        "AI_CHAT_MODEL": "muse-spark-1.3"
+      }
+    }
+  }
+}
+```
+
 ## Learning rule
 
 We will add one vertical feature at a time and understand it before continuing:
