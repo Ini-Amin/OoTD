@@ -10,6 +10,8 @@
 	import { apiBase } from '$lib/outfits';
 	import StylistChat from '$lib/StylistChat.svelte';
 	import { auth } from '$lib/auth.svelte';
+	import { isMakerProfile } from '$lib/makers';
+	import { makerInbox } from '$lib/makerInbox.svelte';
 
 	let { children } = $props();
 
@@ -19,6 +21,24 @@
 	let isMap = $derived(pathname.startsWith('/map'));
 	let isMannequin = $derived(pathname.startsWith('/mannequin'));
 	let isSaved = $derived(pathname.startsWith('/saved'));
+	let isMakers = $derived(pathname.startsWith('/makers'));
+	let maker = $derived(isMakerProfile(auth.profile));
+	// Shared with the /makers dashboard, which pushes its locally-known
+	// count after every mark-read so this badge never goes stale.
+	let makerUnread = $derived(makerInbox.unread);
+
+	// Maker-only inbox badge. Reuses the list endpoint; on any failure the
+	// rail link renders with no badge rather than an error state. Refetch
+	// on auth change, navigation, and focus so the count stays fresh.
+	// (Reads inside refresh() are async and untracked, hence the explicit
+	// void reads below.)
+	$effect(() => {
+		void pathname;
+		void auth.session;
+		void auth.profile;
+		if (!auth.ready) return;
+		void makerInbox.refresh();
+	});
 
 	let q = $state('');
 	let themesOpen = $state(false);
@@ -29,6 +49,11 @@
 		theme.init(apiBase);
 		saved.init();
 		closet.init();
+		const onFocus = () => {
+			void makerInbox.refresh();
+		};
+		window.addEventListener('focus', onFocus);
+		return () => window.removeEventListener('focus', onFocus);
 	});
 
 	// Close the theme menu on any pointer press outside it, or on Escape.
@@ -177,6 +202,24 @@
 				<circle cx="12" cy="7" r="4" />
 			</svg>
 		</a>
+		{#if maker}
+			<a
+				href="/makers"
+				class="rail-item"
+				class:active={isMakers}
+				aria-current={isMakers ? 'page' : undefined}
+				aria-label={makerUnread && makerUnread > 0 ? `Maker dashboard, ${makerUnread} unread` : 'Maker dashboard'}
+				title="Maker dashboard"
+			>
+				<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<path d="M4 7h16v12H4z" />
+					<path d="M4 7l8 6 8-6" />
+				</svg>
+				{#if makerUnread && makerUnread > 0}
+					<span class="rail-badge" aria-hidden="true">{makerUnread > 99 ? '99+' : makerUnread}</span>
+				{/if}
+			</a>
+		{/if}
 	</nav>
 
 	<div class="content-wrapper">
@@ -461,6 +504,27 @@
 		background: var(--t-fg);
 		color: var(--t-bg);
 		border-color: var(--t-fg);
+	}
+
+	.rail-item {
+		position: relative;
+	}
+
+	.rail-badge {
+		position: absolute;
+		top: -0.3rem;
+		right: -0.3rem;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 1.25rem;
+		height: 1.25rem;
+		border-radius: 999px;
+		background: var(--t-accent);
+		color: #fff;
+		font-size: 0.65rem;
+		font-weight: 700;
+		padding: 0 0.25rem;
 	}
 
 	.content-wrapper {

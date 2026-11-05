@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { apiBase } from '$lib/outfits';
 	import { auth, authHeaders } from '$lib/auth.svelte';
@@ -8,8 +9,12 @@
 		craftStatusLabel,
 		formatBudgetIDR,
 		isMakerProfile,
+		isUnread,
+		partitionUnread,
+		unreadCount,
 		type CraftRequestStatus
 	} from '$lib/makers';
+	import { makerInbox } from '$lib/makerInbox.svelte';
 
 	type IncomingRequest = {
 		id: string;
@@ -22,6 +27,7 @@
 		displayName: string;
 		outfitLabel: string;
 		pieceLabel: string;
+		unread?: boolean;
 	};
 
 	let requests = $state<IncomingRequest[]>([]);
@@ -29,9 +35,16 @@
 	let loadError = $state<string | null>(null);
 	let deciding = $state<Record<string, boolean>>({});
 	let decideError = $state<string | null>(null);
+	let marking = $state<Record<string, boolean>>({});
+	// Guards focus-refetch against racing optimistic mutations: every
+	// committed mutation bumps the epoch, and a load() whose epoch is
+	// stale discards its response instead of resurrecting cleared badges.
+	let inboxEpoch = 0;
 
 	let maker = $derived(isMakerProfile(auth.profile));
 	let next = $derived(page.url.pathname);
+	let inbox = $derived(partitionUnread(requests));
+	let unreadN = $derived(unreadCount(requests));
 
 	$effect(() => {
 		if (auth.ready && auth.session && maker && requests.length === 0 && !loading && !loadError) {
@@ -39,11 +52,23 @@
 		}
 	});
 
+	// Makers online when a request arrives miss it until reload (load runs
+	// once) — refetch when the tab regains focus.
+	onMount(() => {
+		const onFocus = () => {
+			if (auth.ready && auth.session && maker && !loading) void load();
+		};
+		window.addEventListener('focus', onFocus);
+		return () => window.removeEventListener('focus', onFocus);
+	});
+
 	async function load(): Promise<void> {
+		const epoch = ++inboxEpoch;
 		loading = true;
 		loadError = null;
 		try {
 			const res = await fetch(`${apiBase}/v1/requests`, { headers: { ...authHeaders() } });
+			if (epoch !== inboxEpoch) return;
 			if (res.status === 401) {
 				loadError = 'Your session expired. Sign in again.';
 				return;
@@ -58,8 +83,11 @@
 				return;
 			}
 			const data = (await res.json()) as { requests?: IncomingRequest[] };
+			if (epoch !== inboxEpoch) return;
 			requests = data.requests ?? [];
+			makerInbox.setLocal(unreadCount(requests));
 		} catch (err) {
+			if (epoch !== inboxEpoch) return;
 			loadError = err instanceof Error ? err.message : 'Network error';
 		} finally {
 			loading = false;
@@ -87,6 +115,9 @@
 					r.id === data.request!.id ? { ...r, status: data.request!.status } : r
 				);
 			}
+			inboxEpoch++;
+			// Acting on a request implies reading it.
+			void markRead(id, { silent: true });
 		} catch (err) {
 			decideError = err instanceof Error ? err.message : 'Network error';
 		} finally {
@@ -94,6 +125,48 @@
 			delete nextDeciding[id];
 			deciding = nextDeciding;
 		}
+	}
+
+	async function markRead(id: string, opts: { silent?: boolean } = {}): Promise<void> {
+		const target = requests.find((r) => r.id === id);
+		if (!target || !isUnread(target) || marking[id]) return;
+		marking = { ...marking, [id]: true };
+		requests = requests.map((r) => (r.id === id ? { ...r, unread: false } : r));
+		try {
+			const res = await fetch(`${apiBase}/v1/requests/${encodeURIComponent(id)}/read`, {
+				method: 'POST',
+				headers: { ...authHeaders() }
+			});
+			if (!res.ok) throw new Error(`Request failed (${res.status})`);
+			inboxEpoch++;
+		} catch (err) {
+			requests = requests.map((r) => (r.id === id ? { ...r, unread: true } : r));
+			if (!opts.silent) decideError = err instanceof Error ? err.message : 'Network error';
+		} finally {
+			const nextMarking = { ...marking };
+			delete nextMarking[id];
+			marking = nextMarking;
+		}
+		makerInbox.setLocal(unreadCount(requests));
+	}
+
+	async function markAllRead(): Promise<void> {
+		if (unreadN === 0) return;
+		const before = requests;
+		requests = requests.map((r) => ({ ...r, unread: false }));
+		decideError = null;
+		try {
+			const res = await fetch(`${apiBase}/v1/requests/read-all`, {
+				method: 'POST',
+				headers: { ...authHeaders() }
+			});
+			if (!res.ok) throw new Error(`Request failed (${res.status})`);
+			inboxEpoch++;
+		} catch (err) {
+			requests = before;
+			decideError = err instanceof Error ? err.message : 'Network error';
+		}
+		makerInbox.setLocal(unreadCount(requests));
 	}
 
 	function referenceLabel(r: IncomingRequest): string | null {
@@ -108,9 +181,101 @@
 	<title>Maker dashboard — OoTD</title>
 </svelte:head>
 
+{#snippet requestCard(r: IncomingRequest)}
+	<li
+		class="request-card"
+		class:unread={isUnread(r)}
+		data-testid="maker-request"
+		data-unread={isUnread(r) ? 'true' : undefined}
+	>
+		<div class="request-head">
+			<strong class="requester">
+				{#if isUnread(r)}<span class="unread-dot" aria-hidden="true"></span>{/if}
+				{r.displayName} <span class="handle">@{r.username}</span>
+			</strong>
+			<span class="pill-row">
+				{#if isUnread(r)}<span class="new-pill">Baru</span>{/if}
+				<span class="status-pill" data-status={r.status}>{craftStatusLabel(r.status)}</span>
+			</span>
+		</div>
+		<p class="request-meta">{r.category} · {formatBudgetIDR(r.budgetIdr)}</p>
+		{#if referenceLabel(r)}
+			<p class="request-ref">Inspired by: {referenceLabel(r)}</p>
+		{/if}
+		<p class="request-desc">{r.description}</p>
+		{#if canDecide(r.status)}
+			<div class="request-actions">
+				<button
+					type="button"
+					class="btn-primary"
+					disabled={deciding[r.id]}
+					onclick={() => void decide(r.id, 'accepted')}
+				>
+					{deciding[r.id] ? 'Saving...' : 'Accept'}
+				</button>
+				<button
+					type="button"
+					class="btn-secondary"
+					disabled={deciding[r.id]}
+					onclick={() => void decide(r.id, 'declined')}
+				>
+					Decline
+				</button>
+				{#if isUnread(r)}
+					<button
+						type="button"
+						class="btn-ghost"
+						disabled={marking[r.id]}
+						onclick={() => void markRead(r.id)}
+					>
+						{marking[r.id] ? 'Saving...' : 'Tandai dibaca'}
+					</button>
+				{/if}
+			</div>
+		{:else if canMarkDone(r.status)}
+			<div class="request-actions">
+				<button
+					type="button"
+					class="btn-primary"
+					disabled={deciding[r.id]}
+					onclick={() => void decide(r.id, 'done')}
+				>
+					{deciding[r.id] ? 'Saving...' : 'Mark done'}
+				</button>
+				{#if isUnread(r)}
+					<button
+						type="button"
+						class="btn-ghost"
+						disabled={marking[r.id]}
+						onclick={() => void markRead(r.id)}
+					>
+						{marking[r.id] ? 'Saving...' : 'Tandai dibaca'}
+					</button>
+				{/if}
+			</div>
+		{:else if isUnread(r)}
+			<div class="request-actions">
+				<button
+					type="button"
+					class="btn-ghost"
+					disabled={marking[r.id]}
+					onclick={() => void markRead(r.id)}
+				>
+					{marking[r.id] ? 'Saving...' : 'Tandai dibaca'}
+				</button>
+			</div>
+		{/if}
+	</li>
+{/snippet}
+
 <main class="makers-page">
 	<p class="eyebrow">Marketplace</p>
-	<h1>Maker dashboard</h1>
+	<h1>
+		Maker dashboard
+		{#if unreadN > 0}
+			<span class="unread-badge" data-testid="makers-unread-badge">Belum dibaca ({unreadN})</span>
+		{/if}
+	</h1>
 
 	{#if !auth.ready}
 		<p class="quiet-state">Loading...</p>
@@ -144,52 +309,27 @@
 				No craft requests yet. New requests from the mannequin studio will appear here.
 			</p>
 		{:else}
-			<ul class="request-list">
-				{#each requests as r (r.id)}
-					<li class="request-card" data-testid="maker-request">
-						<div class="request-head">
-							<strong class="requester">{r.displayName} <span class="handle">@{r.username}</span></strong>
-							<span class="status-pill" data-status={r.status}>{craftStatusLabel(r.status)}</span>
-						</div>
-						<p class="request-meta">{r.category} · {formatBudgetIDR(r.budgetIdr)}</p>
-						{#if referenceLabel(r)}
-							<p class="request-ref">Inspired by: {referenceLabel(r)}</p>
-						{/if}
-						<p class="request-desc">{r.description}</p>
-						{#if canDecide(r.status)}
-							<div class="request-actions">
-								<button
-									type="button"
-									class="btn-primary"
-									disabled={deciding[r.id]}
-									onclick={() => void decide(r.id, 'accepted')}
-								>
-									{deciding[r.id] ? 'Saving...' : 'Accept'}
-								</button>
-								<button
-									type="button"
-									class="btn-secondary"
-									disabled={deciding[r.id]}
-									onclick={() => void decide(r.id, 'declined')}
-								>
-									Decline
-								</button>
-							</div>
-						{:else if canMarkDone(r.status)}
-							<div class="request-actions">
-								<button
-									type="button"
-									class="btn-primary"
-									disabled={deciding[r.id]}
-									onclick={() => void decide(r.id, 'done')}
-								>
-									{deciding[r.id] ? 'Saving...' : 'Mark done'}
-								</button>
-							</div>
-						{/if}
-					</li>
-				{/each}
-			</ul>
+			{#if inbox.unread.length > 0}
+				<div class="section-head">
+					<h2>Belum dibaca</h2>
+					<button type="button" class="btn-secondary" onclick={() => void markAllRead()}>
+						Tandai semua dibaca
+					</button>
+				</div>
+				<ul class="request-list">
+					{#each inbox.unread as r (r.id)}
+						{@render requestCard(r)}
+					{/each}
+				</ul>
+			{/if}
+			{#if inbox.rest.length > 0}
+				<h2 class="section-title">Semua permintaan</h2>
+				<ul class="request-list">
+					{#each inbox.rest as r (r.id)}
+						{@render requestCard(r)}
+					{/each}
+				</ul>
+			{/if}
 		{/if}
 	{/if}
 </main>
@@ -218,6 +358,38 @@
 		font-family: var(--t-font);
 		font-size: 1.6rem;
 		letter-spacing: -0.02em;
+		color: var(--t-fg);
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+	}
+
+	.unread-badge {
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		padding: 0.3rem 0.7rem;
+		border-radius: 999px;
+		background: var(--t-fg);
+		color: var(--t-bg);
+		white-space: nowrap;
+	}
+
+	.section-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+	}
+
+	.section-head h2,
+	.section-title {
+		margin: 0.5rem 0 0;
+		font-size: 1rem;
+		font-weight: 700;
 		color: var(--t-fg);
 	}
 
@@ -271,6 +443,20 @@
 		gap: 0.5rem;
 	}
 
+	.request-card.unread {
+		border-color: var(--t-fg);
+	}
+
+	.unread-dot {
+		display: inline-block;
+		width: 0.55rem;
+		height: 0.55rem;
+		border-radius: 50%;
+		background: var(--t-accent);
+		margin-right: 0.4rem;
+		vertical-align: baseline;
+	}
+
 	.request-head {
 		display: flex;
 		align-items: center;
@@ -286,6 +472,24 @@
 	.handle {
 		font-weight: 500;
 		color: var(--t-muted);
+	}
+
+	.pill-row {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+
+	.new-pill {
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		padding: 0.25rem 0.6rem;
+		border-radius: 999px;
+		background: var(--t-accent);
+		color: #fff;
+		white-space: nowrap;
 	}
 
 	.status-pill {
@@ -341,6 +545,7 @@
 		display: flex;
 		gap: 0.6rem;
 		margin-top: 0.35rem;
+		flex-wrap: wrap;
 	}
 
 	.btn-primary {
@@ -374,5 +579,26 @@
 	.btn-secondary:hover:not(:disabled) {
 		color: var(--t-fg);
 		border-color: var(--t-fg);
+	}
+
+	.btn-ghost {
+		padding: 0.6rem 0.5rem;
+		border: none;
+		background: transparent;
+		color: var(--t-muted);
+		font-family: var(--t-font);
+		font-size: 0.85rem;
+		text-decoration: underline;
+		text-underline-offset: 3px;
+		cursor: pointer;
+	}
+
+	.btn-ghost:hover:not(:disabled) {
+		color: var(--t-fg);
+	}
+
+	.btn-ghost:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 </style>

@@ -65,23 +65,24 @@ func (s *server) createCraftRequest(w http.ResponseWriter, r *http.Request, clai
 
 // requireMaker resolves the caller's profile role server-side. Non-makers
 // get 403; callers without a profile get 404 (same as other profile-gated
-// writes: "create your profile first").
-func (s *server) requireMaker(w http.ResponseWriter, r *http.Request, claims *authClaims) bool {
-	var role string
-	err := s.db.QueryRow(r.Context(), "SELECT role FROM users WHERE auth_id = $1::uuid", claims.Sub).Scan(&role)
+// writes: "create your profile first"). On success it returns the caller's
+// users.id for per-maker state (read marks).
+func (s *server) requireMaker(w http.ResponseWriter, r *http.Request, claims *authClaims) (string, bool) {
+	var id, role string
+	err := s.db.QueryRow(r.Context(), "SELECT id::text, role FROM users WHERE auth_id = $1::uuid", claims.Sub).Scan(&id, &role)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "create your profile first")
-			return false
+			return "", false
 		}
 		serverError(w, err)
-		return false
+		return "", false
 	}
 	if role != "maker" {
 		writeError(w, http.StatusForbidden, "makers only")
-		return false
+		return "", false
 	}
-	return true
+	return id, true
 }
 
 type craftRequestView struct {
@@ -95,21 +96,25 @@ type craftRequestView struct {
 	DisplayName string `json:"displayName"`
 	OutfitLabel string `json:"outfitLabel"`
 	PieceLabel  string `json:"pieceLabel"`
+	Unread      bool   `json:"unread"`
 }
 
 func (s *server) listCraftRequests(w http.ResponseWriter, r *http.Request, claims *authClaims) {
-	if !s.requireMaker(w, r, claims) {
+	makerID, ok := s.requireMaker(w, r, claims)
+	if !ok {
 		return
 	}
 	rows, err := s.db.Query(r.Context(), `
 		SELECT c.id::text, c.category, c.description, c.budget_idr, c.status,
 		       c.created_at, u.username, u.display_name,
-		       COALESCE(c.outfit_label, ''), COALESCE(c.piece_label, '')
+		       COALESCE(c.outfit_label, ''), COALESCE(c.piece_label, ''),
+		       (mr.read_at IS NULL) AS unread
 		FROM craft_requests c
 		JOIN users u ON u.id = c.user_id
-		ORDER BY c.created_at DESC
+		LEFT JOIN maker_request_reads mr ON mr.request_id = c.id AND mr.maker_id = $1::uuid
+		ORDER BY unread DESC, c.created_at DESC
 		LIMIT 100
-	`)
+	`, makerID)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -117,22 +122,86 @@ func (s *server) listCraftRequests(w http.ResponseWriter, r *http.Request, claim
 	defer rows.Close()
 
 	requests := []craftRequestView{}
+	unreadCount := 0
 	for rows.Next() {
 		var v craftRequestView
 		var createdAt time.Time
 		if err := rows.Scan(&v.ID, &v.Category, &v.Description, &v.BudgetIDR, &v.Status,
-			&createdAt, &v.Username, &v.DisplayName, &v.OutfitLabel, &v.PieceLabel); err != nil {
+			&createdAt, &v.Username, &v.DisplayName, &v.OutfitLabel, &v.PieceLabel, &v.Unread); err != nil {
 			serverError(w, err)
 			return
 		}
 		v.CreatedAt = createdAt.Format(time.RFC3339)
+		if v.Unread {
+			unreadCount++
+		}
 		requests = append(requests, v)
 	}
 	if err := rows.Err(); err != nil {
 		serverError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string][]craftRequestView{"requests": requests})
+	writeJSON(w, http.StatusOK, map[string]any{"requests": requests, "unreadCount": unreadCount})
+}
+
+// markCraftRequestRead is idempotent: reading twice is a no-op. 404 when the
+// request does not exist. Read state is orthogonal to status (open/accepted/
+// declined/done) — viewing never implies deciding.
+func (s *server) markCraftRequestRead(w http.ResponseWriter, r *http.Request, claims *authClaims) {
+	makerID, ok := s.requireMaker(w, r, claims)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	if !uuidRegex.MatchString(id) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	// Single statement: a separate EXISTS check followed by INSERT could
+	// hit an FK violation (500) if the request were deleted in between.
+	tag, err := s.db.Exec(r.Context(), `
+		INSERT INTO maker_request_reads (maker_id, request_id)
+		SELECT $1::uuid, $2::uuid
+		WHERE EXISTS (SELECT 1 FROM craft_requests WHERE id = $2::uuid)
+		ON CONFLICT DO NOTHING
+	`, makerID, id)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		// Either the request does not exist (404) or this maker already
+		// read it (idempotent 200): disambiguate with a plain SELECT,
+		// which has no failure mode under races.
+		var exists bool
+		err := s.db.QueryRow(r.Context(), "SELECT EXISTS (SELECT 1 FROM craft_requests WHERE id = $1::uuid)", id).Scan(&exists)
+		if err != nil {
+			serverError(w, err)
+			return
+		}
+		if !exists {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"request": map[string]string{"id": id}})
+}
+
+// markAllCraftRequestsRead marks every existing request read for the caller.
+func (s *server) markAllCraftRequestsRead(w http.ResponseWriter, r *http.Request, claims *authClaims) {
+	makerID, ok := s.requireMaker(w, r, claims)
+	if !ok {
+		return
+	}
+	if _, err := s.db.Exec(r.Context(), `
+		INSERT INTO maker_request_reads (maker_id, request_id)
+		SELECT $1::uuid, c.id FROM craft_requests c
+		ON CONFLICT DO NOTHING
+	`, makerID); err != nil {
+		serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 type updateCraftRequestInput struct {
@@ -140,7 +209,7 @@ type updateCraftRequestInput struct {
 }
 
 func (s *server) updateCraftRequest(w http.ResponseWriter, r *http.Request, claims *authClaims) {
-	if !s.requireMaker(w, r, claims) {
+	if _, ok := s.requireMaker(w, r, claims); !ok {
 		return
 	}
 	id := r.PathValue("id")

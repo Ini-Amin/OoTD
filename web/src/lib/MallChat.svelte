@@ -5,6 +5,7 @@
 	import { presence } from '$lib/presence.svelte';
 	import { mallFriends, storeById } from '$lib/mall';
 	import { BOT_BADGE, BOT_THREAD_LABEL, botPeerId, isBotPeerId } from '$lib/mallBots';
+	import { sortThreadIds } from '$lib/mallUnread';
 	import { playClick } from '$lib/mallSound';
 
 	/** Overlay mode floats inside the 3D stage; docked mode fills its parent. */
@@ -21,7 +22,18 @@
 	const makers = storeById('makers');
 	let visitors = $derived(presence.visitors.filter((v) => v.clientId !== presence.clientId));
 	let makersOnline = $derived(visitors.filter((v) => v.role === 'maker'));
-	let threadIds = $derived(Object.keys(mallChat.whispers));
+	let threadIds = $derived(
+		sortThreadIds(
+			[...new Set([...Object.keys(mallChat.whispers), ...Object.keys(mallChat.restoredMeta)])],
+			mallChat.unread,
+			(id) => {
+				const t = mallChat.whispers[id] ?? [];
+				const last = t[t.length - 1];
+				if (last) return last.at;
+				return mallChat.restoredMeta[id]?.at ?? 0;
+			}
+		)
+	);
 	let unreadTotal = $derived(mallChat.unreadTotal());
 	let thread = $derived(peerId ? (mallChat.whispers[peerId] ?? []) : []);
 	let peerName = $derived(peerId ? mallChat.threadName(peerId) : '');
@@ -63,8 +75,10 @@
 	function lastPreview(id: string): string {
 		const t = mallChat.whispers[id] ?? [];
 		const last = t[t.length - 1];
-		if (!last) return '';
-		return last.mine ? `You: ${last.text}` : last.text;
+		if (last) return last.mine ? `You: ${last.text}` : last.text;
+		// Restored threads carry no message text (ephemeral by design); the
+		// "Aktivitas baru" note below carries the meaning instead.
+		return '';
 	}
 
 	function openChat() {
@@ -227,6 +241,9 @@
 								<span class="bot-badge" data-testid="bot-badge">{BOT_BADGE}</span>
 							{/if}
 							<span class="peer-sub">{lastPreview(id)}</span>
+							{#if mallChat.restoredMeta[id]}
+								<span class="peer-sub restored-note">Aktivitas baru · riwayat tidak tersimpan</span>
+							{/if}
 							{#if (mallChat.unread[id] ?? 0) > 0}
 								<span class="tab-badge">{mallChat.unread[id]}</span>
 							{/if}
@@ -273,7 +290,12 @@
 				</div>
 				<div class="chat-box" bind:this={boxEl} role="log" aria-live="polite" aria-label="Whisper thread">
 					{#if thread.length === 0}
-						{#if botThread}
+						{#if peerId && mallChat.restoredMeta[peerId]}
+							<p class="chat-empty">
+								Ada pesan belum dibaca dari {peerName}, tapi riwayat whisper tidak
+								tersimpan setelah reload. Pesan baru akan muncul di sini.
+							</p>
+						{:else if botThread}
 							<p class="chat-empty">Say hi to {peerName}. Balasannya otomatis.</p>
 							<p class="chat-empty-sub">Bot demo — bukan manusia.</p>
 						{:else}
@@ -618,6 +640,10 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.restored-note {
+		font-style: italic;
 	}
 
 	.maker-name {

@@ -2,6 +2,13 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 import { isBlocked, shouldThrottle } from './chatFilter';
 import { botDisplayName, botIdFromPeerId, botReplyFor, isBotPeerId } from './mallBots';
 import { HISTORY_LIMIT, mergeHistory, parseHistoryRow, type HistoryRow } from './mallChatHistory';
+import {
+	MALL_UNREAD_KEY,
+	computeRestoredState,
+	parsePersistedUnread,
+	serializeUnread,
+	type UnreadThreadMeta
+} from './mallUnread';
 import { mallFriends } from './mall';
 import { myDisplayName, presence } from './presence.svelte';
 import { getSupabase } from './supabase';
@@ -30,12 +37,16 @@ class MallChatStore {
 	whisperNames = $state<Record<string, string>>({});
 	/** Unread counts: 'mall' plus one per peer clientId. */
 	unread = $state<Record<string, number>>({});
+	/** Restored unread-thread metadata (counts survived reload, bodies did not). */
+	restoredMeta = $state<Record<string, UnreadThreadMeta>>({});
 	status = $state<MallChatStatus>('connecting');
 	/** Honest rejection reason shown to the sender when moderation blocks a send. */
 	lastRejection = $state<string | null>(null);
 	#channel: RealtimeChannel | null = null;
 	#seen = new Set<string>();
 	#sendHistory: number[] = [];
+	/** True once persisted unread has been restored (first connect only). */
+	#restored = false;
 
 	connect(): void {
 		if (typeof window === 'undefined' || this.#channel) return;
@@ -45,6 +56,7 @@ class MallChatStore {
 			return;
 		}
 		this.status = 'connecting';
+		this.#restoreUnread();
 		const channel = supabase.channel(CHANNEL, { config: { broadcast: { self: false } } });
 		this.#channel = channel;
 		channel
@@ -65,6 +77,7 @@ class MallChatStore {
 					{ id: p.id, name: p.name.slice(0, 40), text: p.text.slice(0, MAX_LEN), mine: false, at: Date.now() }
 				];
 				this.unread = { ...this.unread, mall: (this.unread['mall'] ?? 0) + 1 };
+				this.#persistUnread();
 			})
 			.on('broadcast', { event: 'whisper' }, ({ payload }) => {
 				const p = payload as {
@@ -105,6 +118,12 @@ class MallChatStore {
 					]
 				};
 				this.unread = { ...this.unread, [peerId]: (this.unread[peerId] ?? 0) + 1 };
+				if (this.restoredMeta[peerId]) {
+					const meta = { ...this.restoredMeta };
+					delete meta[peerId];
+					this.restoredMeta = meta;
+				}
+				this.#persistUnread();
 			})
 			.subscribe((subStatus) => {
 				this.status = subStatus === 'SUBSCRIBED' ? 'live' : subStatus === 'CLOSED' || subStatus === 'CHANNEL_ERROR' ? 'offline' : 'connecting';
@@ -147,6 +166,61 @@ class MallChatStore {
 		const next = { ...this.unread };
 		delete next[key];
 		this.unread = next;
+		if (this.restoredMeta[key]) {
+			const meta = { ...this.restoredMeta };
+			delete meta[key];
+			this.restoredMeta = meta;
+		}
+		this.#persistUnread();
+	}
+
+	/**
+	 * Persist unread counts + peer name + timestamp; message text is never
+	 * stored (whispers stay ephemeral; shared browsers must not leak them).
+	 */
+	#persistUnread(): void {
+		if (typeof window === 'undefined') return;
+		try {
+			const threads: UnreadThreadMeta[] = [];
+			for (const [peerId, count] of Object.entries(this.unread)) {
+				if (peerId === 'mall' || count <= 0) continue;
+				const thread = this.whispers[peerId] ?? [];
+				const last = thread[thread.length - 1];
+				const restored = this.restoredMeta[peerId];
+				threads.push({
+					peerId,
+					name: this.whisperNames[peerId] ?? restored?.name ?? 'Visitor',
+					at: last?.at ?? restored?.at ?? Date.now()
+				});
+			}
+			window.localStorage.setItem(MALL_UNREAD_KEY, serializeUnread(this.unread, threads));
+		} catch {
+			// Private mode / quota: unread still works for this session.
+		}
+	}
+
+	/**
+	 * Restore persisted unread on the first connect only. The store is a
+	 * module singleton whose state survives disconnect(), so restoring on
+	 * every SPA remount would inflate counts on each visit.
+	 */
+	#restoreUnread(): void {
+		if (typeof window === 'undefined' || this.#restored) return;
+		this.#restored = true;
+		try {
+			const raw = window.localStorage.getItem(MALL_UNREAD_KEY);
+			const persisted = parsePersistedUnread(raw);
+			const { unread, meta, names } = computeRestoredState(
+				persisted,
+				Object.keys(this.whispers),
+				this.whisperNames
+			);
+			this.unread = unread;
+			this.restoredMeta = meta;
+			this.whisperNames = names;
+		} catch {
+			// Storage blocked: start with in-session state only.
+		}
 	}
 
 	/** Total unread across mall chat and every whisper thread. */
@@ -283,6 +357,7 @@ class MallChatStore {
 				]
 			};
 			this.unread = { ...this.unread, [peerId]: (this.unread[peerId] ?? 0) + 1 };
+			this.#persistUnread();
 		};
 		if (typeof window !== 'undefined' && typeof window.setTimeout === 'function') {
 			window.setTimeout(pushReply, 600);

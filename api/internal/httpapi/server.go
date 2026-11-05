@@ -100,6 +100,8 @@ func NewServer(db *pgxpool.Pool, auth *Authenticator, allowedOrigin string) http
 	mux.HandleFunc("POST /v1/requests", s.auth.requireAuth(s.createCraftRequest))
 	mux.HandleFunc("GET /v1/requests", s.auth.requireAuth(s.listCraftRequests))
 	mux.HandleFunc("PATCH /v1/requests/{id}", s.auth.requireAuth(s.updateCraftRequest))
+	mux.HandleFunc("POST /v1/requests/{id}/read", s.auth.requireAuth(s.markCraftRequestRead))
+	mux.HandleFunc("POST /v1/requests/read-all", s.auth.requireAuth(s.markAllCraftRequestsRead))
 	mux.HandleFunc("POST /v1/analyze", s.auth.requireAuth(s.analyzeOutfit))
 	mux.HandleFunc("POST /v1/stylist", s.auth.requireAuth(s.stylistChat))
 	mux.HandleFunc("POST /v1/uploads", s.auth.requireAuth(s.uploadImage))
