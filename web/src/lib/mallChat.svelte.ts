@@ -1,5 +1,6 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { isBlocked, shouldThrottle } from './chatFilter';
+import { HISTORY_LIMIT, mergeHistory, parseHistoryRow, type HistoryRow } from './mallChatHistory';
 import { myDisplayName, presence } from './presence.svelte';
 import { getSupabase } from './supabase';
 
@@ -106,6 +107,30 @@ class MallChatStore {
 			.subscribe((subStatus) => {
 				this.status = subStatus === 'SUBSCRIBED' ? 'live' : subStatus === 'CLOSED' || subStatus === 'CHANNEL_ERROR' ? 'offline' : 'connecting';
 			});
+		void this.#loadHistory();
+	}
+
+	/** Load the newest persisted public messages and merge with live traffic. */
+	async #loadHistory(): Promise<void> {
+		const supabase = getSupabase();
+		if (!supabase) return;
+		try {
+			const { data, error } = await supabase
+				.from('mall_messages')
+				.select('id,name,text,created_at')
+				.order('created_at', { ascending: false })
+				.limit(HISTORY_LIMIT);
+			if (error || !data) return;
+			const rows: HistoryRow[] = [];
+			for (const r of data) {
+				const h = parseHistoryRow(r);
+				if (h) rows.push(h);
+			}
+			this.messages = mergeHistory(this.messages, rows, MAX_MESSAGES);
+			for (const m of this.messages) this.#seen.add(m.id);
+		} catch {
+			// Offline tolerance: live broadcast still works without history.
+		}
 	}
 
 	disconnect(): void {
@@ -161,9 +186,22 @@ class MallChatStore {
 			{ id, name, text, mine: true, at: Date.now() }
 		];
 		const res = await this.#channel.send({ type: 'broadcast', event: 'msg', payload: { id, name, text } });
+		await this.#persist(id, name, text);
 		return res === 'ok';
 	}
 
+	/** Best-effort persist to mall_messages so public chat survives refresh. */
+	async #persist(id: string, name: string, text: string): Promise<void> {
+		try {
+			const supabase = getSupabase();
+			if (!supabase) return;
+			await supabase.from('mall_messages').insert({ id, name, text });
+		} catch {
+			// Live broadcast already delivered; persistence retries on next send.
+		}
+	}
+
+	/** Whisper stays ephemeral by design: 1:1 threads are never persisted. */
 	async sendWhisper(peerId: string, peerName: string, raw: string): Promise<boolean> {
 		const text = raw.trim().slice(0, MAX_LEN);
 		if (!text || !peerId || !this.#channel || this.status !== 'live') return false;
