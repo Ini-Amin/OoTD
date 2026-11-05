@@ -2,6 +2,7 @@
 	import { pushState } from '$app/navigation';
 	import { page } from '$app/state';
 	import { apiBase, previewOutfits, type Outfit } from '$lib/outfits';
+import { mergeFeedOutfits } from '$lib/feedMerge';
 	import OutfitCard from '$lib/OutfitCard.svelte';
 	import OutfitViewer from '$lib/OutfitViewer.svelte';
 
@@ -40,7 +41,8 @@
 					if (!res.ok) throw new Error('API request failed');
 					const data = (await res.json()) as { outfits?: Outfit[] };
 					if (seq !== requestSeq) return;
-					outfits = Array.isArray(data.outfits) ? data.outfits : [];
+					const api = Array.isArray(data.outfits) ? data.outfits : [];
+					outfits = mergeFeedOutfits(api, previewOutfits);
 					feedSource = 'api';
 					loading = false;
 				})
