@@ -352,6 +352,17 @@
 		commentsError = '';
 		commentsUnavailable = false;
 
+		// Preview ids (look-*) are local-only and never in the DB: resolve
+		// them without a doomed API fetch (which 404s, logs a console
+		// error, and previously bypassed the preview fallback below).
+		const local = previewOutfits.find((o) => o.id === targetId);
+		if (local) {
+			outfit = local;
+			loading = false;
+			void loadComments(local.id, local.commentCount ?? 0);
+			return;
+		}
+
 		try {
 			const res = await fetch(`${apiBase}/v1/outfits/${encodeURIComponent(targetId)}`);
 			if (req !== currentRequestId) return;
