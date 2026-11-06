@@ -186,6 +186,17 @@ describe('findSimilar', () => {
 		);
 	});
 
+	it('does not dedupe imageless candidates against each other', () => {
+		// Regression: imageUrl "" (API outfits without a photo) keyed every
+		// imageless candidate identically, hiding all but the first.
+		const noImg = (id: string) => makeOutfit({ id, tags: ['Hijab'], imageUrl: '' });
+		const undefImg = (id: string) => makeOutfit({ id, tags: ['Hijab'], imageUrl: undefined });
+		assert.deepEqual(
+			findSimilar(target, [noImg('n1'), noImg('n2'), undefImg('n3')]).map((o) => o.id),
+			['n1', 'n2', 'n3']
+		);
+	});
+
 	it('drops preview candidates for a real target but allows preview peers', () => {
 		const preview = makeOutfit({ id: 'look-001', tags: ['Hijab'], savedBy: 5 });
 		const real = makeOutfit({ id: '22222222-2222-4222-8222-222222222222', tags: ['Hijab'] });

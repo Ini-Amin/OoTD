@@ -250,7 +250,8 @@ export type FindSimilarOptions = {
 /**
  * Ranked similar outfits: excludes the target by id and by shared imageUrl
  * (self-duplicates surviving feed dedupe), dedupes candidates by id then by
- * imageUrl ?? id (mirroring feedMerge semantics), requires score >=
+ * imageUrl || id (falsy imageUrl falls back to id, so imageless outfits
+ * never collapse into one), requires score >=
  * minScore AND a shared tag or piece overlap (so a color-only coincidence
  * never qualifies), and sorts deterministically by score desc, savedBy
  * desc, then id ascending by code-unit comparison (never localeCompare).
@@ -277,7 +278,10 @@ export function findSimilar(
 		if (target.imageUrl && c.imageUrl && c.imageUrl === target.imageUrl) continue;
 		if (seenIds.has(c.id)) continue;
 		seenIds.add(c.id);
-		const imageKey = c.imageUrl ?? `id:${c.id}`;
+		// Falsy (not just nullish): API outfits without a photo carry
+		// imageUrl "" — keying them by "" would dedupe all but the first
+		// imageless candidate against each other.
+		const imageKey = c.imageUrl || `id:${c.id}`;
 		if (seenImages.has(imageKey)) continue;
 		seenImages.add(imageKey);
 		const parts = components(pt, prepare(c));
