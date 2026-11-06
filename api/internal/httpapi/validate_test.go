@@ -412,6 +412,35 @@ func TestValidateCraftRequestLabels(t *testing.T) {
 	}
 }
 
+func TestValidateComment(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		want    string
+		wantErr bool
+	}{
+		{name: "ok", body: "Love this look!", want: "Love this look!"},
+		{name: "trims whitespace", body: "  hello  ", want: "hello"},
+		{name: "empty", body: "", wantErr: true},
+		{name: "whitespace only", body: "   ", wantErr: true},
+		{name: "500 runes ok", body: strings.Repeat("a", 500), want: strings.Repeat("a", 500)},
+		{name: "500 multibyte runes ok", body: strings.Repeat("日", 500), want: strings.Repeat("日", 500)},
+		{name: "501 runes rejected", body: strings.Repeat("a", 501), wantErr: true},
+		{name: "501 multibyte runes rejected", body: strings.Repeat("日", 501), wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := validateComment(commentInput{Body: tc.body})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validateComment() error = %v, wantErr = %v", err, tc.wantErr)
+			}
+			if !tc.wantErr && got.Body != tc.want {
+				t.Errorf("got body %q, want %q", got.Body, tc.want)
+			}
+		})
+	}
+}
+
 func TestValidateProfile(t *testing.T) {
 	tests := []struct {
 		name        string

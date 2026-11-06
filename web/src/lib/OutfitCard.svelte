@@ -62,6 +62,15 @@
 			<a href={`/o/${outfit.id}`} class="card-title" onclick={handlePhotoClick}>{outfit.title}</a>
 			<a href={`/u/${username}`} class="card-handle">{outfit.handle}</a>
 		</div>
+		<a
+			href={`/o/${outfit.id}`}
+			class="comment-chip"
+			aria-label={`${outfit.commentCount ?? 0} comments`}
+			title={`${outfit.commentCount ?? 0} comments`}
+			onclick={handlePhotoClick}
+		>
+			💬 {outfit.commentCount ?? 0}
+		</a>
 		<button
 			type="button"
 			class="save-button"
@@ -233,7 +242,29 @@
 		border-color: var(--t-fg);
 	}
 
+	.comment-chip {
+		flex-shrink: 0;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		padding: 0.3rem 0.55rem;
+		border-radius: 9999px;
+		border: 1px solid var(--t-line);
+		background: color-mix(in srgb, var(--t-surface) 92%, transparent);
+		color: var(--t-fg);
+		font-size: 0.72rem;
+		font-weight: 500;
+		text-decoration: none;
+		white-space: nowrap;
+	}
+
+	.comment-chip:hover {
+		background: var(--t-tint);
+		border-color: var(--t-fg);
+	}
+
 	.save-button:focus-visible,
+	.comment-chip:focus-visible,
 	.photo-link:focus-visible,
 	.card-title:focus-visible,
 	.card-handle:focus-visible {

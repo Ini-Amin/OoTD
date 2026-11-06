@@ -43,6 +43,19 @@ describe('isBlocked', () => {
 		assert.equal(isBlocked('anjir'), true); // but the real word still hits
 		assert.equal(isBlocked('eh anjir!'), true);
 	});
+
+	it('catches separator and leet evasions without new false positives', () => {
+		assert.equal(isBlocked('f.u.c.k this'), true);
+		assert.equal(isBlocked('F_U_C_K'), true);
+		assert.equal(isBlocked('a-n-j-i-r'), true);
+		assert.equal(isBlocked('sh1t happens'), true);
+		assert.equal(isBlocked('@ss'), true);
+		assert.equal(isBlocked('b1tch please'), true);
+		assert.equal(isBlocked('scunthorpe problem'), false);
+		assert.equal(isBlocked('a b c'), false);
+		assert.equal(isBlocked('I love u'), false);
+		assert.equal(isBlocked('from the u.s.a'), false);
+	});
 });
 
 describe('shouldThrottle', () => {

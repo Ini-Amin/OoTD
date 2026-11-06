@@ -12,7 +12,18 @@
 	} from '$lib/pieceCache';
 	import { decideSavePiece } from '$lib/saveGate';
 	import { apiBase, previewOutfits, ratioOf, type Outfit } from '$lib/outfits';
+	import {
+		canDeleteComment,
+		deleteComment,
+		fetchComments,
+		MAX_COMMENT_LEN,
+		postComment,
+		type CommentItem
+	} from '$lib/comments';
+	import { isBlocked } from '$lib/chatFilter';
 	import CategoryIcon from '$lib/CategoryIcon.svelte';
+
+	const uuidPattern = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 	let { id, onclose }: { id: string; onclose?: () => void } = $props();
 
@@ -33,6 +44,19 @@
 	let toastTimeout: ReturnType<typeof setTimeout> | undefined;
 
 	let currentRequestId = 0;
+
+	let comments = $state<CommentItem[]>([]);
+	let commentTotal = $state(0);
+	let commentsLoading = $state(false);
+	let commentsError = $state('');
+	let commentsUnavailable = $state(false);
+	let commentDraft = $state('');
+	// Rune count: the server caps at 500 runes, while maxlength/.length
+	// count UTF-16 units (an emoji-heavy draft would hit the box cap early).
+	let commentRunes = $derived([...commentDraft.trim()].length);
+	let posting = $state(false);
+	let deletingId = $state<string | null>(null);
+	let commentRequestId = 0;
 
 	// AI-tagged pieces for THIS outfit id only (from cache or a fresh
 	// background /v1/analyze call). Scoped by outfit id so a slow response
@@ -229,6 +253,88 @@
 		}
 	}
 
+	function formatCommentTime(iso: string): string {
+		const d = new Date(iso);
+		if (Number.isNaN(d.getTime())) return '';
+		return d.toLocaleDateString(undefined, {
+			month: 'short',
+			day: 'numeric',
+			year: 'numeric'
+		});
+	}
+
+	async function loadComments(targetId: string, fallbackTotal: number) {
+		const req = ++commentRequestId;
+		comments = [];
+		commentsError = '';
+		commentsUnavailable = false;
+		commentDraft = '';
+		commentTotal = fallbackTotal;
+		// Preview looks (ids like 'look-001') are not in the DB: the
+		// comments endpoints 404, so degrade gracefully instead of fetching.
+		if (!uuidPattern.test(targetId)) {
+			commentsUnavailable = true;
+			return;
+		}
+		commentsLoading = true;
+		const result = await fetchComments(targetId);
+		if (req !== commentRequestId) return;
+		commentsLoading = false;
+		if (result.ok) {
+			comments = result.comments;
+			commentTotal = result.commentCount;
+		} else if (result.status === 404) {
+			commentsUnavailable = true;
+		} else {
+			commentsError = result.error;
+		}
+	}
+
+	async function submitComment() {
+		if (!outfit || posting) return;
+		const body = commentDraft.trim();
+		if (!body) return;
+		if ([...body].length > MAX_COMMENT_LEN) {
+			commentsError = `Comment is too long (max ${MAX_COMMENT_LEN} characters).`;
+			return;
+		}
+		if (isBlocked(body)) {
+			commentsError = 'Comment rejected: inappropriate language.';
+			return;
+		}
+		const token = auth.token;
+		if (!token) return;
+		posting = true;
+		commentsError = '';
+		const result = await postComment(outfit.id, body, token);
+		posting = false;
+		if (!outfit) return;
+		if (result.ok) {
+			comments = [...comments, result.comment];
+			commentTotal += 1;
+			commentDraft = '';
+		} else {
+			commentsError = result.error;
+		}
+	}
+
+	async function removeComment(commentId: string) {
+		if (!outfit || deletingId) return;
+		const token = auth.token;
+		if (!token) return;
+		deletingId = commentId;
+		const result = await deleteComment(outfit.id, commentId, token);
+		deletingId = null;
+		if (!outfit) return;
+		if (result.ok) {
+			comments = comments.filter((c) => c.id !== commentId);
+			commentTotal = Math.max(0, commentTotal - 1);
+			showToast('Comment deleted');
+		} else {
+			commentsError = result.error;
+		}
+	}
+
 	async function loadOutfit(targetId: string) {
 		if (!targetId) {
 			loading = false;
@@ -241,6 +347,10 @@
 		error = null;
 		errorMessage = '';
 		imageError = false;
+		comments = [];
+		commentTotal = 0;
+		commentsError = '';
+		commentsUnavailable = false;
 
 		try {
 			const res = await fetch(`${apiBase}/v1/outfits/${encodeURIComponent(targetId)}`);
@@ -256,12 +366,14 @@
 			const data = (await res.json()) as { outfit: Outfit };
 			if (req !== currentRequestId) return;
 			outfit = data.outfit;
+			void loadComments(outfit.id, outfit.commentCount ?? 0);
 		} catch (err) {
 			if (req !== currentRequestId) return;
 			const fallback = previewOutfits.find((o) => o.id === targetId);
 			if (fallback) {
 				outfit = fallback;
 				error = null;
+				void loadComments(fallback.id, fallback.commentCount ?? 0);
 			} else {
 				error = 'network';
 				errorMessage = err instanceof Error ? err.message : 'Network error';
@@ -480,6 +592,7 @@
 				<div class="meta-footer">
 					<div class="counts-row">
 						<span class="save-count">♡ {saveCount}</span>
+						<span class="comment-count">💬 {commentTotal}</span>
 					</div>
 					<div class="actions-row">
 						<button
@@ -502,6 +615,100 @@
 						{/if}
 					</div>
 				</div>
+
+				<section class="comments" aria-label="Comments">
+					<h2 class="comments-title">
+						Comments{#if !commentsUnavailable} ({commentTotal}){/if}
+					</h2>
+					{#if commentsUnavailable}
+						<p class="quiet-state">Comments unavailable for preview looks.</p>
+					{:else if commentsLoading}
+						<p class="quiet-state">Loading comments…</p>
+					{:else}
+						{#if commentsError}
+							<p class="error-region" role="alert">{commentsError}</p>
+						{/if}
+						{#if comments.length === 0}
+							<p class="quiet-state">No comments yet. Be the first to share your thoughts.</p>
+						{:else}
+							<ol class="comment-list">
+								{#each comments as c (c.id)}
+									<li class="comment">
+										<div class="comment-head">
+											<a href={`/u/${c.author.username}`} class="comment-author">
+												{c.author.displayName}
+											</a>
+											<span class="comment-handle">{c.author.handle}</span>
+											<time class="comment-time" datetime={c.createdAt}>
+												{formatCommentTime(c.createdAt)}
+											</time>
+										</div>
+										<p class="comment-body">{c.body}</p>
+										{#if canDeleteComment(c.author.username, outfit.handle, auth.profile?.username)}
+											<button
+												type="button"
+												class="comment-delete"
+												disabled={deletingId === c.id}
+												onclick={() => removeComment(c.id)}
+											>
+												{deletingId === c.id ? 'Deleting…' : 'Delete'}
+											</button>
+										{/if}
+									</li>
+								{/each}
+							</ol>
+							{#if commentTotal > comments.length}
+								<p class="quiet-state">
+									Showing {comments.length} of {commentTotal} comments.
+								</p>
+							{/if}
+						{/if}
+						{#if !auth.ready}
+							<p class="quiet-state">Loading...</p>
+						{:else if !auth.session}
+							<p class="quiet-state">
+								<a href={`/login?next=${encodeURIComponent(`/o/${outfit.id}`)}`}>
+									Sign in to comment.
+								</a>
+							</p>
+						{:else if auth.profile === null}
+							<p class="quiet-state">
+								<a href="/welcome">Finish setting up your profile first.</a>
+							</p>
+						{:else if auth.profile}
+							<form
+								class="composer"
+								onsubmit={(e) => {
+									e.preventDefault();
+									submitComment();
+								}}
+							>
+								<label class="composer-label" for="comment-box">
+									Comment as @{auth.profile.username}
+								</label>
+								<textarea
+									id="comment-box"
+									bind:value={commentDraft}
+									rows="3"
+									placeholder="Share your thoughts…"
+									disabled={posting}
+								></textarea>
+								<div class="composer-row">
+									<span class="char-count" class:over={commentRunes > MAX_COMMENT_LEN}
+										>{commentRunes}/{MAX_COMMENT_LEN}</span
+									>
+									<button
+										type="submit"
+										class="comment-submit"
+										disabled={posting || !commentDraft.trim() || commentRunes > MAX_COMMENT_LEN}
+									>
+										{posting ? 'Posting…' : 'Post'}
+									</button>
+								</div>
+							</form>
+						{/if}
+					{/if}
+				</section>
 			</div>
 		</div>
 	{/if}
@@ -961,6 +1168,7 @@
 	.counts-row {
 		display: flex;
 		align-items: center;
+		gap: 0.75rem;
 		font-size: 0.85rem;
 		color: var(--t-muted);
 	}
@@ -1032,6 +1240,195 @@
 		font-size: 0.8rem;
 		color: var(--t-muted);
 		animation: fadeIn 0.2s ease;
+	}
+
+	.comments {
+		display: flex;
+		flex-direction: column;
+		gap: 0.875rem;
+		padding-top: 1.25rem;
+		border-top: 1px solid var(--t-line);
+	}
+
+	.comments-title {
+		font-size: 0.95rem;
+		font-weight: 600;
+		margin: 0;
+		color: var(--t-fg);
+	}
+
+	.quiet-state {
+		font-size: 0.85rem;
+		color: var(--t-muted);
+		margin: 0;
+		line-height: 1.5;
+	}
+
+	.quiet-state a {
+		color: var(--t-accent);
+		text-underline-offset: 2px;
+	}
+
+	.error-region {
+		font-size: 0.85rem;
+		color: #b3261e;
+		background: color-mix(in srgb, #b3261e 8%, var(--t-surface));
+		border: 1px solid color-mix(in srgb, #b3261e 30%, var(--t-line));
+		border-radius: var(--t-radius);
+		padding: 0.5rem 0.75rem;
+		margin: 0;
+		line-height: 1.4;
+	}
+
+	.comment-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.875rem;
+	}
+
+	.comment {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+		padding-bottom: 0.875rem;
+		border-bottom: 1px solid var(--t-line);
+	}
+
+	.comment:last-child {
+		border-bottom: none;
+		padding-bottom: 0;
+	}
+
+	.comment-head {
+		display: flex;
+		align-items: baseline;
+		gap: 0.4rem;
+		flex-wrap: wrap;
+	}
+
+	.comment-author {
+		font-size: 0.82rem;
+		font-weight: 600;
+		color: var(--t-fg);
+		text-decoration: none;
+	}
+
+	.comment-author:hover {
+		text-decoration: underline;
+		text-underline-offset: 2px;
+	}
+
+	.comment-handle,
+	.comment-time {
+		font-size: 0.75rem;
+		color: var(--t-muted);
+	}
+
+	.comment-time {
+		margin-left: auto;
+	}
+
+	.comment-body {
+		font-size: 0.87rem;
+		line-height: 1.5;
+		color: var(--t-fg);
+		margin: 0;
+		overflow-wrap: anywhere;
+		white-space: pre-wrap;
+	}
+
+	.comment-delete {
+		align-self: flex-start;
+		padding: 0.15rem 0;
+		border: none;
+		background: none;
+		color: var(--t-muted);
+		font-size: 0.75rem;
+		cursor: pointer;
+	}
+
+	.comment-delete:hover:not(:disabled) {
+		color: var(--t-fg);
+		text-decoration: underline;
+		text-underline-offset: 2px;
+	}
+
+	.comment-delete:disabled {
+		opacity: 0.5;
+		cursor: wait;
+	}
+
+	.composer {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	.composer-label {
+		font-size: 0.78rem;
+		color: var(--t-muted);
+	}
+
+	.composer textarea {
+		resize: vertical;
+		min-height: 4.25rem;
+		padding: 0.6rem 0.75rem;
+		border-radius: var(--t-radius);
+		border: 1px solid var(--t-line);
+		background: var(--t-bg);
+		color: var(--t-fg);
+		font: inherit;
+		font-size: 0.87rem;
+		line-height: 1.5;
+	}
+
+	.composer textarea:focus-visible {
+		outline: 2px solid var(--t-accent);
+		outline-offset: 1px;
+	}
+
+	.composer-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.625rem;
+	}
+
+	.char-count {
+		font-size: 0.75rem;
+		color: var(--t-muted);
+	}
+
+	.char-count.over {
+		color: #b3261e;
+		font-weight: 600;
+	}
+
+	.comment-submit {
+		padding: 0.45rem 1rem;
+		border-radius: var(--t-radius);
+		border: 1px solid var(--t-fg);
+		background: var(--t-fg);
+		color: var(--t-bg);
+		font-size: 0.82rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.comment-submit:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+
+	.comment-submit:focus-visible,
+	.comment-delete:focus-visible,
+	.comment-author:focus-visible,
+	.quiet-state a:focus-visible {
+		outline: 2px solid var(--t-accent);
+		outline-offset: 2px;
 	}
 
 	@keyframes pulse {

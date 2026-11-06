@@ -25,15 +25,16 @@ type Piece struct {
 }
 
 type Outfit struct {
-	ID          string   `json:"id"`
-	Creator     string   `json:"creator"`
-	Handle      string   `json:"handle"`
-	Title       string   `json:"title"`
-	Caption     string   `json:"caption"`
-	Tags        []string `json:"tags"`
-	Accent      string   `json:"accent"`
-	SavedBy     int      `json:"savedBy"`
-	Match       int      `json:"match"`
+	ID           string   `json:"id"`
+	Creator      string   `json:"creator"`
+	Handle       string   `json:"handle"`
+	Title        string   `json:"title"`
+	Caption      string   `json:"caption"`
+	Tags         []string `json:"tags"`
+	Accent       string   `json:"accent"`
+	SavedBy      int      `json:"savedBy"`
+	CommentCount int      `json:"commentCount"`
+	Match        int      `json:"match"`
 	ImageURL    string   `json:"imageUrl"`
 	ImageWidth  int      `json:"imageWidth"`
 	ImageHeight int      `json:"imageHeight"`
@@ -84,6 +85,9 @@ func NewServer(db *pgxpool.Pool, auth *Authenticator, allowedOrigin string) http
 	mux.HandleFunc("POST /v1/outfits/{id}/save", s.auth.requireAuth(s.saveOutfit))
 	mux.HandleFunc("DELETE /v1/outfits/{id}/save", s.auth.requireAuth(s.unsaveOutfit))
 	mux.HandleFunc("GET /v1/me/saves", s.auth.requireAuth(s.listSaves))
+	mux.HandleFunc("GET /v1/outfits/{id}/comments", s.listComments)
+	mux.HandleFunc("POST /v1/outfits/{id}/comments", s.auth.requireAuth(s.createComment))
+	mux.HandleFunc("DELETE /v1/outfits/{id}/comments/{commentId}", s.auth.requireAuth(s.deleteComment))
 	mux.HandleFunc("POST /v1/collections", s.auth.requireAuth(s.createCollection))
 	mux.HandleFunc("GET /v1/collections", s.auth.requireAuth(s.listCollections))
 	mux.HandleFunc("DELETE /v1/collections/{id}", s.auth.requireAuth(s.deleteCollection))
@@ -119,7 +123,7 @@ var uuidRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4
 
 func outfitSelectSQL(matchExpr, whereClause, orderClause string) string {
 	return `
-		SELECT o.id::text, u.display_name, '@' || u.username, o.title, o.caption, o.accent, o.save_count,
+		SELECT o.id::text, u.display_name, '@' || u.username, o.title, o.caption, o.accent, o.save_count, o.comment_count,
 		       COALESCE(array_agg(t.display_name ORDER BY t.display_name) FILTER (WHERE t.id IS NOT NULL), '{}'),
 		       ` + matchExpr + `,
 		       COALESCE(o.image_url, ''),
@@ -168,7 +172,7 @@ func scanOutfit(row rowScanner) (Outfit, error) {
 	var o Outfit
 	err := row.Scan(
 		&o.ID, &o.Creator, &o.Handle, &o.Title, &o.Caption,
-		&o.Accent, &o.SavedBy, &o.Tags, &o.Match,
+		&o.Accent, &o.SavedBy, &o.CommentCount, &o.Tags, &o.Match,
 		&o.ImageURL, &o.ImageWidth, &o.ImageHeight,
 	)
 	if o.Tags == nil {

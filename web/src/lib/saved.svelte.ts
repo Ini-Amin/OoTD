@@ -31,6 +31,7 @@ function isValidOutfit(item: unknown): item is Outfit {
 		o.tags.every((t) => typeof t === 'string') &&
 		typeof o.accent === 'string' &&
 		typeof o.savedBy === 'number' &&
+		(o.commentCount === undefined || typeof o.commentCount === 'number') &&
 		(o.match === undefined || typeof o.match === 'number') &&
 		(o.imageUrl === undefined || typeof o.imageUrl === 'string') &&
 		(o.imageWidth === undefined || typeof o.imageWidth === 'number') &&

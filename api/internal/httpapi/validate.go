@@ -173,6 +173,24 @@ func validateCraftRequest(in craftRequestInput) (craftRequestInput, error) {
 	return cleaned, nil
 }
 
+type commentInput struct {
+	Body string `json:"body"`
+}
+
+// maxCommentRunes matches mall_messages CHECK and the MallChat MAX_LEN.
+const maxCommentRunes = 500
+
+func validateComment(in commentInput) (commentInput, error) {
+	var cleaned commentInput
+	body := strings.TrimSpace(in.Body)
+	bodyLen := utf8.RuneCountInString(body)
+	if bodyLen < 1 || bodyLen > maxCommentRunes {
+		return cleaned, errors.New("body must be between 1 and 500 characters")
+	}
+	cleaned.Body = body
+	return cleaned, nil
+}
+
 // validateRequestStatus allows only maker-driven transitions: from open to
 // accepted/declined/done, plus accepted to done (work completed). Reopening
 // (back to open) is rejected: requesters file a new request instead.

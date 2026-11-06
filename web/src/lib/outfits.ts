@@ -9,6 +9,7 @@ export type Outfit = {
 	tags: string[];
 	accent: string;
 	savedBy: number;
+	commentCount?: number;
 	match?: number;
 	imageUrl?: string;
 	imageWidth?: number;
