@@ -198,7 +198,12 @@ import { mergeFeedOutfits } from '$lib/feedMerge';
 			bind:this={dialogEl}
 			onkeydown={handleDialogKeyDown}
 		>
-			<OutfitViewer id={page.state.outfitId} onclose={() => history.back()} />
+			<OutfitViewer
+				id={page.state.outfitId}
+				onclose={() => history.back()}
+				candidates={outfits}
+				onopen={handleOpen}
+			/>
 		</div>
 	</div>
 {/if}

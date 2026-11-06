@@ -22,10 +22,19 @@
 	} from '$lib/comments';
 	import { isBlocked } from '$lib/chatFilter';
 	import CategoryIcon from '$lib/CategoryIcon.svelte';
+	import OutfitCard from '$lib/OutfitCard.svelte';
+	import { mergeFeedOutfits } from '$lib/feedMerge';
+	import { findSimilar, SIMILAR_LIMIT } from '$lib/similar';
 
 	const uuidPattern = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
-	let { id, onclose }: { id: string; onclose?: () => void } = $props();
+	let {
+		id,
+		onclose,
+		candidates,
+		onopen
+	}: { id: string; onclose?: () => void; candidates?: Outfit[]; onopen?: (id: string) => void } =
+		$props();
 
 	let outfit = $state<Outfit | null>(null);
 	let loading = $state(true);
@@ -44,6 +53,33 @@
 	let toastTimeout: ReturnType<typeof setTimeout> | undefined;
 
 	let currentRequestId = 0;
+
+	// "Similar looks" candidate pool. The feed modal passes its already-loaded
+	// list (zero new requests); a cold /o/{id} load scores the bundled
+	// previews immediately, fires ONE lazy GET /v1/outfits, then rescores.
+	// The pool is id-independent, so scoring always derives from the current
+	// outfit — a slow pool response can never leak outfit A's ranking into B.
+	let poolApi = $state<Outfit[] | null>(null);
+	let poolSettled = $state(false);
+	let poolStarted = false;
+
+	let poolReady = $derived(candidates !== undefined || poolSettled);
+	let pool = $derived<Outfit[]>(
+		candidates ?? (poolApi ? mergeFeedOutfits(poolApi, previewOutfits) : previewOutfits)
+	);
+
+	// Real (UUID) looks never recommend seeded preview demos (their
+	// comment/save endpoints 404); preview looks may recommend peers.
+	let excludeIds = $derived.by<ReadonlySet<string>>(() => {
+		if (outfit && uuidPattern.test(outfit.id)) {
+			return new Set(previewOutfits.map((o) => o.id));
+		}
+		return new Set<string>();
+	});
+
+	let similar = $derived<Outfit[]>(
+		outfit ? findSimilar(outfit, pool, { excludeIds, limit: SIMILAR_LIMIT }) : []
+	);
 
 	let comments = $state<CommentItem[]>([]);
 	let commentTotal = $state(0);
@@ -412,6 +448,31 @@
 		loadOutfit(currentId);
 	});
 
+	// Cold-load pool upgrade: without it a direct-loaded real look could only
+	// recommend previews (excluded above) and the section would stay empty.
+	// At most one fetch per mount; failures silently keep preview scoring.
+	$effect(() => {
+		if (candidates !== undefined || poolStarted) return;
+		poolStarted = true;
+		// Deliberately no currentRequestId guard here: unlike loadOutfit,
+		// the pool is outfit-independent (scoring always re-derives from
+		// the current outfit), so a response that lands after an id change
+		// is still valid. Discarding it would leave real looks with a
+		// permanently empty section until remount.
+		fetch(`${apiBase}/v1/outfits`)
+			.then(async (res) => {
+				if (!res.ok) throw new Error('pool fetch failed');
+				const data = (await res.json()) as { outfits?: Outfit[] };
+				poolApi = Array.isArray(data.outfits) ? data.outfits : [];
+			})
+			.catch(() => {
+				// Silent: keep the preview-scored result.
+			})
+			.finally(() => {
+				poolSettled = true;
+			});
+	});
+
 	// Auto Magic Tag: untagged outfit + signed in + no cache entry ->
 	// one background POST /v1/analyze (https photos only, once per outfit
 	// per session). Re-runs when the session token arrives after load.
@@ -720,6 +781,21 @@
 						{/if}
 					{/if}
 				</section>
+
+				{#if poolReady}
+					<section class="similar" aria-label="Similar looks">
+						<h2 class="similar-title">Looks like this</h2>
+						{#if similar.length > 0}
+							<div class="similar-grid">
+								{#each similar as item (item.id)}
+									<OutfitCard outfit={item} {onopen} />
+								{/each}
+							</div>
+						{:else}
+							<p class="quiet-state">No similar looks yet — explore the feed for more ideas.</p>
+						{/if}
+					</section>
+				{/if}
 			</div>
 		</div>
 	{/if}
@@ -1268,6 +1344,32 @@
 		color: var(--t-fg);
 	}
 
+	.similar {
+		display: flex;
+		flex-direction: column;
+		gap: 0.875rem;
+		padding-top: 1.25rem;
+		border-top: 1px solid var(--t-line);
+	}
+
+	.similar-title {
+		font-size: 0.95rem;
+		font-weight: 600;
+		margin: 0;
+		color: var(--t-fg);
+	}
+
+	.similar-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.75rem;
+		align-items: start;
+	}
+
+	.similar-grid :global(.outfit-card) {
+		margin-bottom: 0;
+	}
+
 	.quiet-state {
 		font-size: 0.85rem;
 		color: var(--t-muted);
@@ -1513,6 +1615,10 @@
 			border-top: 1px solid var(--t-line);
 			padding: 1.5rem 1.25rem;
 			overflow-y: visible;
+		}
+
+		.similar-grid {
+			grid-template-columns: 1fr;
 		}
 	}
 
