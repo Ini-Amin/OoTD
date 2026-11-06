@@ -12,7 +12,10 @@ export function mergeFeedOutfits<T extends FeedOutfit>(api: T[], preview: T[]): 
 	const seen = new Set<string>();
 	const out: T[] = [];
 	for (const o of [...api, ...preview]) {
-		const key = o.imageUrl ?? `id:${o.id}`;
+		// Falsy (not just nullish): API outfits without a photo carry
+		// imageUrl "" — keying them by "" would collapse all but the first
+		// imageless outfit out of the feed.
+		const key = o.imageUrl || `id:${o.id}`;
 		if (seen.has(key)) continue;
 		seen.add(key);
 		out.push(o);

@@ -39,6 +39,22 @@ describe('mergeFeedOutfits', () => {
 		);
 	});
 
+	it('keeps every imageless API outfit (empty imageUrl is not a dupe key)', () => {
+		// Regression: "" keyed all imageless outfits identically, hiding
+		// all but the first from the feed and the similar-looks pool.
+		const out = mergeFeedOutfits(
+			[
+				{ id: 'a1', imageUrl: '' },
+				{ id: 'a2', imageUrl: '' }
+			],
+			[{ id: 'p1', imageUrl: 'y' }]
+		);
+		assert.deepEqual(
+			out.map((o) => o.id),
+			['a1', 'a2', 'p1']
+		);
+	});
+
 	it('returns full preview when API is empty', () => {
 		const out = mergeFeedOutfits([], [{ id: 'p1' }, { id: 'p2' }]);
 		assert.equal(out.length, 2);
