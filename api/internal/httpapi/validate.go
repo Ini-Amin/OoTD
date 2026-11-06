@@ -191,6 +191,26 @@ func validateComment(in commentInput) (commentInput, error) {
 	return cleaned, nil
 }
 
+type portfolioLinkInput struct {
+	RequestID string `json:"requestId"`
+	OutfitID  string `json:"outfitId"`
+}
+
+func validatePortfolioLink(in portfolioLinkInput) (portfolioLinkInput, error) {
+	var cleaned portfolioLinkInput
+	req := strings.TrimSpace(in.RequestID)
+	if req == "" || !uuidRegex.MatchString(req) {
+		return cleaned, errors.New("requestId must be a valid uuid")
+	}
+	cleaned.RequestID = req
+	out := strings.TrimSpace(in.OutfitID)
+	if out == "" || !uuidRegex.MatchString(out) {
+		return cleaned, errors.New("outfitId must be a valid uuid")
+	}
+	cleaned.OutfitID = out
+	return cleaned, nil
+}
+
 // validateRequestStatus allows only maker-driven transitions: from open to
 // accepted/declined/done, plus accepted to done (work completed). Reopening
 // (back to open) is rejected: requesters file a new request instead.

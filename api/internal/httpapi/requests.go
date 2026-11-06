@@ -86,17 +86,23 @@ func (s *server) requireMaker(w http.ResponseWriter, r *http.Request, claims *au
 }
 
 type craftRequestView struct {
-	ID          string `json:"id"`
-	Category    string `json:"category"`
-	Description string `json:"description"`
-	BudgetIDR   *int64 `json:"budgetIdr"`
-	Status      string `json:"status"`
-	CreatedAt   string `json:"createdAt"`
-	Username    string `json:"username"`
-	DisplayName string `json:"displayName"`
-	OutfitLabel string `json:"outfitLabel"`
-	PieceLabel  string `json:"pieceLabel"`
-	Unread      bool   `json:"unread"`
+	ID                string  `json:"id"`
+	Category          string  `json:"category"`
+	Description       string  `json:"description"`
+	BudgetIDR         *int64  `json:"budgetIdr"`
+	Status            string  `json:"status"`
+	CreatedAt         string  `json:"createdAt"`
+	Username          string  `json:"username"`
+	DisplayName       string  `json:"displayName"`
+	OutfitLabel       string  `json:"outfitLabel"`
+	PieceLabel        string  `json:"pieceLabel"`
+	Unread            bool    `json:"unread"`
+	ShowcasedOutfitID *string `json:"showcasedOutfitId"`
+	ShowcaseID        *string `json:"showcaseId"`
+	// Showcased is true when ANY maker linked this request (first-wins).
+	// Dashboard uses it to explain why Add is unavailable: B cannot
+	// showcase a request A already won.
+	Showcased bool `json:"showcased"`
 }
 
 func (s *server) listCraftRequests(w http.ResponseWriter, r *http.Request, claims *authClaims) {
@@ -108,10 +114,14 @@ func (s *server) listCraftRequests(w http.ResponseWriter, r *http.Request, claim
 		SELECT c.id::text, c.category, c.description, c.budget_idr, c.status,
 		       c.created_at, u.username, u.display_name,
 		       COALESCE(c.outfit_label, ''), COALESCE(c.piece_label, ''),
-		       (mr.read_at IS NULL) AS unread
+		       (mr.read_at IS NULL) AS unread,
+		       mp.outfit_id::text, mp.id::text,
+		       (mp_any.request_id IS NOT NULL) AS showcased
 		FROM craft_requests c
 		JOIN users u ON u.id = c.user_id
 		LEFT JOIN maker_request_reads mr ON mr.request_id = c.id AND mr.maker_id = $1::uuid
+		LEFT JOIN maker_portfolio mp ON mp.request_id = c.id AND mp.maker_id = $1::uuid
+		LEFT JOIN maker_portfolio mp_any ON mp_any.request_id = c.id
 		ORDER BY unread DESC, c.created_at DESC
 		LIMIT 100
 	`, makerID)
@@ -127,7 +137,8 @@ func (s *server) listCraftRequests(w http.ResponseWriter, r *http.Request, claim
 		var v craftRequestView
 		var createdAt time.Time
 		if err := rows.Scan(&v.ID, &v.Category, &v.Description, &v.BudgetIDR, &v.Status,
-			&createdAt, &v.Username, &v.DisplayName, &v.OutfitLabel, &v.PieceLabel, &v.Unread); err != nil {
+			&createdAt, &v.Username, &v.DisplayName, &v.OutfitLabel, &v.PieceLabel, &v.Unread,
+			&v.ShowcasedOutfitID, &v.ShowcaseID, &v.Showcased); err != nil {
 			serverError(w, err)
 			return
 		}

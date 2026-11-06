@@ -11,11 +11,13 @@
 		username: string;
 		displayName: string;
 		bio: string;
+		role: string;
 		theme: Theme | null;
 	};
 
 	let user = $state<UserProfile | null>(null);
 	let outfits = $state<Outfit[]>([]);
+	let portfolio = $state<Outfit[]>([]);
 	let loading = $state(true);
 	let error = $state<'notFound' | 'network' | null>(null);
 	let errorMessage = $state('');
@@ -45,6 +47,7 @@
 				error = 'notFound';
 				user = null;
 				outfits = [];
+				portfolio = [];
 				followerCount = 0;
 				followingCount = 0;
 				following = false;
@@ -55,6 +58,7 @@
 				errorMessage = `Failed to load creator (${res.status})`;
 				user = null;
 				outfits = [];
+				portfolio = [];
 				followerCount = 0;
 				followingCount = 0;
 				following = false;
@@ -71,16 +75,34 @@
 			followerCount = typeof data.followerCount === 'number' ? data.followerCount : 0;
 			followingCount = typeof data.followingCount === 'number' ? data.followingCount : 0;
 			following = false;
+			portfolio = [];
+			if (data.user?.role === 'maker') {
+				await loadPortfolio(cleanHandle);
+			}
 		} catch {
 			error = 'network';
 			errorMessage = 'Network error: could not connect to server.';
 			user = null;
 			outfits = [];
+			portfolio = [];
 			followerCount = 0;
 			followingCount = 0;
 			following = false;
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function loadPortfolio(username: string) {
+		try {
+			const res = await fetch(
+				`${apiBase}/v1/users/${encodeURIComponent(username)}/portfolio`
+			);
+			if (!res.ok) return;
+			const data = (await res.json()) as { outfits?: Outfit[] };
+			portfolio = Array.isArray(data.outfits) ? data.outfits : [];
+		} catch {
+			// Portfolio is additive: a failed load hides the section, not the profile.
 		}
 	}
 
@@ -201,6 +223,19 @@
 				{/if}
 			</header>
 
+			{#if user.role === 'maker' && portfolio.length > 0}
+				<section aria-label="Portfolio — finished commissions">
+					<h2 class="section-title">Portfolio — finished commissions</h2>
+					<div class="masonry">
+						{#each portfolio as outfit (outfit.id)}
+							<div class="masonry-item">
+								<OutfitCard {outfit} />
+							</div>
+						{/each}
+					</div>
+				</section>
+			{/if}
+
 			{#if outfits.length === 0}
 				<div class="empty-state">
 					<p>No looks yet.</p>
@@ -320,6 +355,15 @@
 	.follow-button:disabled {
 		opacity: 0.6;
 		cursor: wait;
+	}
+
+	.section-title {
+		margin: 0 0 1.25rem;
+		font-family: var(--t-font);
+		font-size: 1.15rem;
+		font-weight: 600;
+		letter-spacing: -0.01em;
+		color: var(--t-fg);
 	}
 
 	.empty-state {
