@@ -77,6 +77,94 @@ func TestParsePiecesNotOutfit(t *testing.T) {
 	}
 }
 
+func TestNormalizeIdentifyCondition(t *testing.T) {
+	if got, err := normalizeIdentifyCondition(""); err != nil || got != "new" {
+		t.Fatalf("expected default new, got %q %v", got, err)
+	}
+	if got, err := normalizeIdentifyCondition("thrift"); err != nil || got != "thrift" {
+		t.Fatalf("expected thrift, got %q %v", got, err)
+	}
+	if _, err := normalizeIdentifyCondition("bekas"); err == nil {
+		t.Fatal("expected error for bad condition")
+	}
+}
+
+func TestParsePiecesBrandAndSources(t *testing.T) {
+	raw := `{"pieces":[
+		{"category":"top","label":"White shirt","brand":" Uniqlo ","box":{"x":0.1,"y":0.1,"w":0.5,"h":0.4}},
+		{"category":"shoes","label":"Sneakers"}
+	]}`
+	out, err := parsePieces(raw, 8)
+	if err != nil || len(out) != 2 {
+		t.Fatalf("expected 2 pieces, got %+v %v", out, err)
+	}
+	if out[0].Brand == nil || *out[0].Brand != "Uniqlo" {
+		t.Fatalf("expected trimmed brand, got %+v", out[0].Brand)
+	}
+	if out[1].Brand != nil {
+		t.Fatalf("missing brand must be null, got %q", *out[1].Brand)
+	}
+	if out[0].PriceEstimate != nil {
+		t.Fatal("parsePieces must leave price_estimate null (enrichment happens in the handler)")
+	}
+	if len(out[0].Sources) != 3 || out[0].Sources[0].Label != "Tokopedia" {
+		t.Fatalf("expected 3 labeled sources, got %+v", out[0].Sources)
+	}
+	if out[0].Sources[0].URL != out[0].Links.TokopediaSearch {
+		t.Fatal("sources must rewrap the same links object")
+	}
+	enc, _ := json.Marshal(outfitOutput{Pieces: out, PriceNote: priceNote})
+	for _, want := range []string{`"brand":"Uniqlo"`, `"brand":null`, `"price_estimate":null`, `"sources":[`} {
+		if !strings.Contains(string(enc), want) {
+			t.Fatalf("missing %s in %s", want, enc)
+		}
+	}
+}
+
+func TestPieceSourcesLabels(t *testing.T) {
+	got := pieceSources(buildPieceLinks("White shirt"))
+	if len(got) != 3 {
+		t.Fatalf("expected 3 sources, got %+v", got)
+	}
+	for _, s := range got {
+		if s.Label == "" || !(strings.HasPrefix(s.URL, "https://")) {
+			t.Fatalf("bad source entry: %+v", s)
+		}
+	}
+}
+
+func TestIdentifyInputSchemaHasV2Props(t *testing.T) {
+	enc, _ := json.Marshal(identifyInputSchema())
+	s := string(enc)
+	for _, want := range []string{`"include_price_estimate"`, `"condition"`, `"thrift"`} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("schema missing %s: %s", want, s)
+		}
+	}
+}
+
+func TestInitializeReportsV2(t *testing.T) {
+	resp := handleMessage(nil, []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`))
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected result, got %+v", resp)
+	}
+	enc, _ := json.Marshal(resp.Result)
+	if !strings.Contains(string(enc), `"version":"0.2.0"`) {
+		t.Fatalf("expected version 0.2.0, got %s", enc)
+	}
+}
+
+func TestHandleToolCallBadCondition(t *testing.T) {
+	resp := handleMessage(nil, []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"identify_outfit","arguments":{"image_url":"https://x.test/a.jpg","condition":"bekas"}}}`))
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected tool isError result, got %+v", resp)
+	}
+	res, ok := resp.Result.(callResult)
+	if !ok || !res.IsError {
+		t.Fatalf("expected isError result, got %+v", resp.Result)
+	}
+}
+
 func TestHandleToolCallUnknownTool(t *testing.T) {
 	resp := handleMessage(nil, []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"nope","arguments":{}}}`))
 	if resp == nil || resp.Error == nil {

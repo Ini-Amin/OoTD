@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"strings"
 
 	"github.com/ootd/ootd-api/internal/ai"
@@ -21,10 +20,9 @@ import (
 
 const (
 	estimateToolName = "estimate_price"
-	// maxEstimateIDR rejects absurd model output (Rp1 miliar for one
-	// garment). Rejection beats clamping: clamping fabricates precision.
-	maxEstimateIDR = 1_000_000_000
-	estimateNote   = "Estimasi AI, bukan harga pasar aktual"
+	// estimateNote aliases the shared ai.EstimateNote so MCP and ingest
+	// snapshots label estimates identically.
+	estimateNote = ai.EstimateNote
 )
 
 var estimateConditions = map[string]bool{"new": true, "thrift": true}
@@ -36,13 +34,15 @@ type estimateArguments struct {
 }
 
 // estimateOutput is the wrapped honesty shape: a range plus explicit
-// low-confidence labelling. Never add brand/shop fields here.
+// low-confidence labelling. Sources are marketplace SEARCH URLs (not shops
+// or listings); never add brand fields here.
 type estimateOutput struct {
-	MinIDR     int64  `json:"min_idr"`
-	MaxIDR     int64  `json:"max_idr"`
-	Currency   string `json:"currency"`
-	Confidence string `json:"confidence"`
-	Note       string `json:"note"`
+	MinIDR     int64         `json:"min_idr"`
+	MaxIDR     int64         `json:"max_idr"`
+	Currency   string        `json:"currency"`
+	Confidence string        `json:"confidence"`
+	Note       string        `json:"note"`
+	Sources    []pieceSource `json:"sources,omitempty"`
 }
 
 func estimateInputSchema() any {
@@ -92,6 +92,7 @@ func handleEstimateCall(client *ai.Client, id *json.RawMessage, argsRaw json.Raw
 	if err != nil {
 		return toolError(id, err.Error())
 	}
+	out.Sources = pieceSources(buildPieceLinks(label))
 	text, err := json.Marshal(out)
 	if err != nil {
 		return toolError(id, "encode output: "+compactErr(err))
@@ -121,28 +122,17 @@ func normalizeEstimateArgs(a estimateArguments) (label, category, condition stri
 	return label, category, condition, nil
 }
 
-// parseEstimate decodes the model's {"min_idr":N,"max_idr":M} JSON and
-// enforces the honesty gate. Pure: unit-testable with fixtures, no AI.
+// parseEstimate validates the model's {"min_idr":N,"max_idr":M} JSON via the
+// shared ai.ParseEstimate honesty gate and wraps it for MCP output.
+// Pure: unit-testable with fixtures, no AI.
 func parseEstimate(raw string) (estimateOutput, error) {
-	var v struct {
-		Min *float64 `json:"min_idr"`
-		Max *float64 `json:"max_idr"`
-	}
-	if err := json.Unmarshal([]byte(stripCodeFences(raw)), &v); err != nil {
-		return estimateOutput{}, fmt.Errorf("ai returned invalid JSON")
-	}
-	if v.Min == nil || v.Max == nil {
-		return estimateOutput{}, fmt.Errorf("ai returned invalid price range")
-	}
-	min, max := *v.Min, *v.Max
-	if math.IsNaN(min) || math.IsNaN(max) ||
-		min != math.Trunc(min) || max != math.Trunc(max) ||
-		min < 1 || max < 1 || min > max || max > maxEstimateIDR {
-		return estimateOutput{}, fmt.Errorf("ai returned invalid price range")
+	r, err := ai.ParseEstimate(raw)
+	if err != nil {
+		return estimateOutput{}, err
 	}
 	return estimateOutput{
-		MinIDR:     int64(min),
-		MaxIDR:     int64(max),
+		MinIDR:     r.MinIDR,
+		MaxIDR:     r.MaxIDR,
 		Currency:   "IDR",
 		Confidence: "low",
 		Note:       estimateNote,

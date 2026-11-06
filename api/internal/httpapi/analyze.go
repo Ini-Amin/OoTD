@@ -27,8 +27,9 @@ type analyzeInput struct {
 }
 
 type magicPiece struct {
-	Category string `json:"category"`
-	Label    string `json:"label"`
+	Category string  `json:"category"`
+	Label    string  `json:"label"`
+	Brand    *string `json:"brand,omitempty"`
 	Box      struct {
 		X float64 `json:"x"`
 		Y float64 `json:"y"`
@@ -38,12 +39,12 @@ type magicPiece struct {
 }
 
 type magicResult struct {
-	Title        string     `json:"title"`
-	Caption      string     `json:"caption"`
-	StyleTags    []string   `json:"style_tags"`
-	OccasionTags []string   `json:"occasion_tags"`
-	Season       string     `json:"season"`
-	Colors       []string   `json:"colors"`
+	Title        string       `json:"title"`
+	Caption      string       `json:"caption"`
+	StyleTags    []string     `json:"style_tags"`
+	OccasionTags []string     `json:"occasion_tags"`
+	Season       string       `json:"season"`
+	Colors       []string     `json:"colors"`
 	Pieces       []magicPiece `json:"pieces"`
 }
 
@@ -112,6 +113,7 @@ func sanitizePieces(in []magicPiece) []magicPiece {
 			continue
 		}
 		p.Label = label
+		p.Brand = ai.SanitizeBrand(p.Brand)
 		b := p.Box
 		if b.X < 0 || b.X > 1 || b.Y < 0 || b.Y > 1 ||
 			b.W <= 0 || b.W > 1 || b.H <= 0 || b.H > 1 ||

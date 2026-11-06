@@ -1,0 +1,44 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2026-01-04/server.schema.json",
+  "name": "io.github.ini-amin/ootd-identify-outfit",
+  "description": "Identify garments in an outfit photo: honest nullable brand, marketplace search links, and optional low-confidence IDR price estimates. No price catalog, no brand guessing.",
+  "version": "0.2.0",
+  "repository": {
+    "url": "https://github.com/Ini-Amin/OoTD",
+    "source": "github",
+    "subfolder": "api/cmd/mcp"
+  },
+  "websiteUrl": "https://github.com/Ini-Amin/OoTD",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/ini-amin/ootd-identify-outfit:0.2.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "AI_BASE_URL",
+          "description": "OpenAI-compatible base URL (no trailing slash)",
+          "isRequired": true
+        },
+        {
+          "name": "AI_API_KEY",
+          "description": "API key for the AI provider",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "AI_VISION_MODEL",
+          "description": "Model id for outfit photo analysis",
+          "isRequired": true
+        },
+        {
+          "name": "AI_CHAT_MODEL",
+          "description": "Model id for price estimates",
+          "isRequired": true
+        }
+      ]
+    }
+  ]
+}

@@ -35,10 +35,10 @@ type Outfit struct {
 	SavedBy      int      `json:"savedBy"`
 	CommentCount int      `json:"commentCount"`
 	Match        int      `json:"match"`
-	ImageURL    string   `json:"imageUrl"`
-	ImageWidth  int      `json:"imageWidth"`
-	ImageHeight int      `json:"imageHeight"`
-	Pieces      []Piece  `json:"pieces,omitempty"`
+	ImageURL     string   `json:"imageUrl"`
+	ImageWidth   int      `json:"imageWidth"`
+	ImageHeight  int      `json:"imageHeight"`
+	Pieces       []Piece  `json:"pieces,omitempty"`
 }
 
 type Tag struct {
@@ -59,11 +59,11 @@ type Theme struct {
 }
 
 type UserProfile struct {
-	Username    string  `json:"username"`
-	DisplayName string  `json:"displayName"`
-	Bio         string  `json:"bio"`
-	Role        string  `json:"role"`
-	Theme       *Theme  `json:"theme"`
+	Username    string `json:"username"`
+	DisplayName string `json:"displayName"`
+	Bio         string `json:"bio"`
+	Role        string `json:"role"`
+	Theme       *Theme `json:"theme"`
 }
 
 type server struct {
@@ -112,6 +112,8 @@ func NewServer(db *pgxpool.Pool, auth *Authenticator, allowedOrigin string) http
 	mux.HandleFunc("POST /v1/analyze", s.auth.requireAuth(s.analyzeOutfit))
 	mux.HandleFunc("POST /v1/stylist", s.auth.requireAuth(s.stylistChat))
 	mux.HandleFunc("POST /v1/uploads", s.auth.requireAuth(s.uploadImage))
+	mux.HandleFunc("POST /v1/ingest/mentions", s.ingestMention)
+	mux.HandleFunc("GET /v1/ingest/mentions", s.auth.requireAuth(s.listIngestMentions))
 	return withCORS(mux, allowedOrigin)
 }
 
@@ -122,6 +124,7 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "ootd-api"})
 }
+
 var uuidRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 func outfitSelectSQL(matchExpr, whereClause, orderClause string) string {
@@ -198,7 +201,6 @@ func scanOutfits(rows pgx.Rows) ([]Outfit, error) {
 	}
 	return outfits, nil
 }
-
 
 func parseStyles(raw string) []string {
 	parts := strings.Split(raw, ",")
@@ -466,7 +468,6 @@ func (s *server) createOutfit(w http.ResponseWriter, r *http.Request, claims *au
 
 	writeJSON(w, http.StatusCreated, map[string]Outfit{"outfit": out})
 }
-
 
 func (s *server) listThemes(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.Query(r.Context(), `SELECT slug, name, bg, surface, fg, accent, font, radius FROM themes ORDER BY sort_order`)

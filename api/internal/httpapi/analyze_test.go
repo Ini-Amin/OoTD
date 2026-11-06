@@ -44,6 +44,31 @@ func TestSanitizePieces(t *testing.T) {
 	}
 }
 
+func TestSanitizePiecesBrand(t *testing.T) {
+	brand := " Uniqlo "
+	long := strings.Repeat("b", 81)
+	box := struct {
+		X float64 `json:"x"`
+		Y float64 `json:"y"`
+		W float64 `json:"w"`
+		H float64 `json:"h"`
+	}{X: 0.1, Y: 0.1, W: 0.5, H: 0.4}
+	out := sanitizePieces([]magicPiece{
+		{Category: "top", Label: "Shirt", Brand: &brand, Box: box},
+		{Category: "top", Label: "No brand", Box: box},
+		{Category: "top", Label: "Long brand", Brand: &long, Box: box},
+	})
+	if len(out) != 3 {
+		t.Fatalf("expected 3 pieces, got %d", len(out))
+	}
+	if out[0].Brand == nil || *out[0].Brand != "Uniqlo" {
+		t.Fatalf("brand not trimmed: %+v", out[0].Brand)
+	}
+	if out[1].Brand != nil || out[2].Brand != nil {
+		t.Fatal("missing/overlong brands must become nil")
+	}
+}
+
 func TestLimitStrings(t *testing.T) {
 	in := []string{"a", "b", "a", " ", "c", "d"}
 	out := limitStrings(in, 3)

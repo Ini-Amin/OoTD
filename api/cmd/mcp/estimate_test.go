@@ -2,9 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/ootd/ootd-api/internal/ai"
 )
 
 func TestParseEstimateOK(t *testing.T) {
@@ -159,6 +164,102 @@ func TestBuildPieceLinksEscaping(t *testing.T) {
 		if q.Get("q") != label {
 			t.Fatalf("query round-trip failed: %q != %q", q.Get("q"), label)
 		}
+	}
+}
+
+func TestEstimateOutputSourcesMarshal(t *testing.T) {
+	withSources := estimateOutput{
+		MinIDR: 50000, MaxIDR: 150000, Currency: "IDR", Confidence: "low", Note: estimateNote,
+		Sources: pieceSources(buildPieceLinks("Kemeja putih")),
+	}
+	enc, _ := json.Marshal(withSources)
+	if !strings.Contains(string(enc), `"sources":[{"label":"Tokopedia"`) {
+		t.Fatalf("top-level estimate must carry labeled sources: %s", enc)
+	}
+	nested := estimateOutput{
+		MinIDR: 50000, MaxIDR: 150000, Currency: "IDR", Confidence: "low", Note: estimateNote,
+	}
+	encNested, _ := json.Marshal(nested)
+	if strings.Contains(string(encNested), `"sources"`) {
+		t.Fatalf("nested price_estimate omits sources (outer piece already has them): %s", encNested)
+	}
+}
+
+// stubAIClient serves canned vision/chat replies keyed by request model and
+// returns a client configured from test env. No network beyond localhost.
+func stubAIClient(t *testing.T, visionContent, chatContent string) *ai.Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Model string `json:"model"`
+		}
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		_ = json.Unmarshal(body, &req)
+		content := chatContent
+		if req.Model == "vision-model" {
+			content = visionContent
+		}
+		w.Header().Set("Content-Type", "application/json")
+		resp, _ := json.Marshal(map[string]any{
+			"choices": []any{map[string]any{"message": map[string]any{"content": content}}},
+		})
+		_, _ = w.Write(resp)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("AI_BASE_URL", srv.URL)
+	t.Setenv("AI_API_KEY", "test-key")
+	t.Setenv("AI_VISION_MODEL", "vision-model")
+	t.Setenv("AI_CHAT_MODEL", "chat-model")
+	c := ai.NewClientFromEnv()
+	if c == nil {
+		t.Fatal("expected configured client")
+	}
+	return c
+}
+
+func toolText(t *testing.T, resp *rpcResponse) string {
+	t.Helper()
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected tool result, got %+v", resp)
+	}
+	res, ok := resp.Result.(callResult)
+	if !ok || res.IsError {
+		t.Fatalf("expected success result, got %+v", resp.Result)
+	}
+	return res.Content[0].Text
+}
+
+func TestHandleEstimateCallReturnsSources(t *testing.T) {
+	c := stubAIClient(t, "", `{"min_idr": 50000, "max_idr": 150000}`)
+	id := json.RawMessage(`1`)
+	resp := handleEstimateCall(c, &id, json.RawMessage(`{"label":"Kemeja putih"}`))
+	text := toolText(t, resp)
+	for _, want := range []string{`"min_idr":50000`, `"confidence":"low"`, `"sources":[{"label":"Tokopedia"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %s in %s", want, text)
+		}
+	}
+}
+
+func TestHandleIdentifyCallEnrichesEstimatesWhenRequested(t *testing.T) {
+	vision := `{"pieces":[{"category":"top","label":"White shirt","brand":"Uniqlo"}]}`
+	c := stubAIClient(t, vision, `{"min_idr": 50000, "max_idr": 150000}`)
+	resp := handleMessage(c, []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"identify_outfit","arguments":{"image_url":"https://x.test/a.jpg","include_price_estimate":true,"condition":"thrift"}}}`))
+	text := toolText(t, resp)
+	for _, want := range []string{`"brand":"Uniqlo"`, `"price_estimate":{"min_idr":50000`, `"sources":[`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %s in %s", want, text)
+		}
+	}
+}
+
+func TestHandleIdentifyCallSkipsEstimatesByDefault(t *testing.T) {
+	vision := `{"pieces":[{"category":"top","label":"White shirt"}]}`
+	c := stubAIClient(t, vision, `{"min_idr": 50000, "max_idr": 150000}`)
+	resp := handleMessage(c, []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"identify_outfit","arguments":{"image_url":"https://x.test/a.jpg"}}}`))
+	text := toolText(t, resp)
+	if !strings.Contains(text, `"price_estimate":null`) {
+		t.Fatalf("default call must leave price_estimate null: %s", text)
 	}
 }
 

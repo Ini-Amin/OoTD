@@ -31,6 +31,7 @@ Analyze the outfit photo and return ONLY a JSON object (no markdown, no commenta
     {
       "category": "one of: hat, top, bottom, shoes, bag, accessory",
       "label": "descriptive label, max 80 chars, e.g. 'Oversized white poplin shirt'",
+      "brand": "brand name, max 80 chars, ONLY if a logo/wordmark is clearly visible in the photo, else null",
       "box": {"x": 0.0-1.0, "y": 0.0-1.0, "w": 0.0-1.0, "h": 0.0-1.0}
     }
   ]
@@ -41,6 +42,7 @@ Rules:
 - Boxes are normalized fractions of image width/height: x,y is the top-left corner. Keep x+w <= 1 and y+h <= 1.
 - Prefer "top" for dresses and one-piece garments (use a tall box covering the dress).
 - Labels name the garment AND its key visual traits (fabric, color, fit). Never just "shirt".
+- Brand is null by default. Set it ONLY when a logo/wordmark is clearly readable in the photo; never guess a brand from style, cut, or vibe.
 - If the person wears a hijab/headscarf, tag it as category "hat" with label mentioning hijab.
 - style_tags must come from the example vocabulary or close variants; do not invent obscure tags.
 - If the photo is not an outfit photo (no person/clothing visible), return {"error": "not_an_outfit"}.`

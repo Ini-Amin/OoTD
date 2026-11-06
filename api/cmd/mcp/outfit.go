@@ -25,8 +25,10 @@ var pieceCategories = map[string]bool{
 }
 
 type toolArguments struct {
-	ImageURL  string `json:"image_url"`
-	MaxPieces *int   `json:"max_pieces"`
+	ImageURL             string `json:"image_url"`
+	MaxPieces            *int   `json:"max_pieces"`
+	IncludePriceEstimate *bool  `json:"include_price_estimate"`
+	Condition            string `json:"condition"`
 }
 
 // aiMagicResult mirrors the subset of the Magic Tag JSON we consume.
@@ -37,8 +39,9 @@ type aiMagicResult struct {
 }
 
 type aiMagicPiece struct {
-	Category string `json:"category"`
-	Label    string `json:"label"`
+	Category string  `json:"category"`
+	Label    string  `json:"label"`
+	Brand    *string `json:"brand"`
 	Box      *struct {
 		X float64 `json:"x"`
 		Y float64 `json:"y"`
@@ -51,12 +54,17 @@ type aiMagicPiece struct {
 // this repo, so Price is always null — never invent a number or a brand.
 // Links are pure marketplace SEARCH URLs built from the label (not
 // listings, not recommendations): the user can check real prices there.
+// Brand is the model's honest nullable guess (logo visible or null), and
+// PriceEstimate is an optional low-confidence AI range, never a market price.
 type outfitPiece struct {
-	Category    string     `json:"category"`
-	Label       string     `json:"label"`
-	Description string     `json:"description"`
-	Price       *float64   `json:"price"`
-	Links       pieceLinks `json:"links"`
+	Category      string          `json:"category"`
+	Label         string          `json:"label"`
+	Description   string          `json:"description"`
+	Brand         *string         `json:"brand"`
+	Price         *float64        `json:"price"`
+	PriceEstimate *estimateOutput `json:"price_estimate"`
+	Links         pieceLinks      `json:"links"`
+	Sources       []pieceSource   `json:"sources"`
 }
 
 // pieceLinks holds marketplace search URLs for one piece label.
@@ -64,6 +72,13 @@ type pieceLinks struct {
 	TokopediaSearch string `json:"tokopedia_search"`
 	ShopeeSearch    string `json:"shopee_search"`
 	GoogleShopping  string `json:"google_shopping"`
+}
+
+// pieceSource is one labeled marketplace search URL: the same data as
+// pieceLinks in array form for clients that prefer a list.
+type pieceSource struct {
+	Label string `json:"label"`
+	URL   string `json:"url"`
 }
 
 // buildPieceLinks builds search URLs from a sanitized label. Pure:
@@ -77,13 +92,23 @@ func buildPieceLinks(label string) pieceLinks {
 	}
 }
 
+// pieceSources rewraps pieceLinks as a labeled array. Pure: unit-testable.
+func pieceSources(links pieceLinks) []pieceSource {
+	return []pieceSource{
+		{Label: "Tokopedia", URL: links.TokopediaSearch},
+		{Label: "Shopee", URL: links.ShopeeSearch},
+		{Label: "Google Shopping", URL: links.GoogleShopping},
+	}
+}
+
 type outfitOutput struct {
 	Pieces    []outfitPiece `json:"pieces"`
 	PriceNote string        `json:"price_note"`
 }
 
 const priceNote = "OoTD has no price catalog: every piece reports price null. " +
-	"Connect a product/affiliate catalog to enable pricing."
+	"Connect a product/affiliate catalog to enable pricing. " +
+	"Per-piece price_estimate (when requested) is a low-confidence AI guess, not a market price."
 
 func identifyInputSchema() any {
 	return map[string]any{
@@ -100,6 +125,17 @@ func identifyInputSchema() any {
 				"minimum":     1,
 				"maximum":     maxPiecesHardLimit,
 				"description": "Maximum pieces to return (default 8).",
+			},
+			"include_price_estimate": map[string]any{
+				"type":        "boolean",
+				"default":     false,
+				"description": "When true, each piece carries a low-confidence AI price_estimate (never a market price). Default false.",
+			},
+			"condition": map[string]any{
+				"type":        "string",
+				"enum":        []string{"new", "thrift"},
+				"default":     "new",
+				"description": "Condition forwarded to the price estimate; default new.",
 			},
 		},
 		"required":             []string{"image_url"},
@@ -123,14 +159,14 @@ func handleMessage(client *ai.Client, msg []byte) *rpcResponse {
 		return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: initializeResult{
 			ProtocolVersion: protocolVersion,
 			Capabilities:    map[string]any{"tools": map[string]any{}},
-			ServerInfo:      serverInfo{Name: "ootd-identify-outfit", Version: "0.1.0"},
+			ServerInfo:      serverInfo{Name: "ootd-identify-outfit", Version: "0.2.0"},
 		}}
 	case "tools/list":
 		return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
 			"tools": []mcpTool{
 				{
 					Name:        identifyToolName,
-					Description: "Identify garments in an outfit photo. Returns category/label/description/links per piece; price is always null (no catalog), links are marketplace search URLs.",
+					Description: "Identify garments in an outfit photo. Returns category/label/description/brand/links/sources per piece plus optional low-confidence price_estimate; price is always null (no catalog), links are marketplace search URLs.",
 					InputSchema: identifyInputSchema(),
 				},
 				{
@@ -167,13 +203,17 @@ func handleToolCall(client *ai.Client, id *json.RawMessage, params json.RawMessa
 	dec := json.NewDecoder(strings.NewReader(string(call.Arguments)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&args); err != nil {
-		return toolError(id, "arguments must be {image_url, max_pieces?}: "+compactErr(err))
+		return toolError(id, "arguments must be {image_url, max_pieces?, include_price_estimate?, condition?}: "+compactErr(err))
 	}
 	imgURL, err := normalizeImageURL(args.ImageURL)
 	if err != nil {
 		return toolError(id, err.Error())
 	}
 	maxPieces, err := normalizeMaxPieces(args.MaxPieces)
+	if err != nil {
+		return toolError(id, err.Error())
+	}
+	condition, err := normalizeIdentifyCondition(args.Condition)
 	if err != nil {
 		return toolError(id, err.Error())
 	}
@@ -187,6 +227,9 @@ func handleToolCall(client *ai.Client, id *json.RawMessage, params json.RawMessa
 	pieces, err := parsePieces(raw, maxPieces)
 	if err != nil {
 		return toolError(id, err.Error())
+	}
+	if args.IncludePriceEstimate != nil && *args.IncludePriceEstimate {
+		enrichPiecesWithEstimates(client, pieces, condition)
 	}
 	text, err := json.Marshal(outfitOutput{Pieces: pieces, PriceNote: priceNote})
 	if err != nil {
@@ -224,6 +267,36 @@ func normalizeMaxPieces(p *int) (int, error) {
 	return *p, nil
 }
 
+// normalizeIdentifyCondition defaults the estimate condition to "new" and
+// reuses the estimate_price allowlist. Pure: unit-testable.
+func normalizeIdentifyCondition(condition string) (string, error) {
+	condition = strings.TrimSpace(condition)
+	if condition == "" {
+		return "new", nil
+	}
+	if !estimateConditions[condition] {
+		return "", fmt.Errorf(`condition must be "new" or "thrift"`)
+	}
+	return condition, nil
+}
+
+// enrichPiecesWithEstimates fills PriceEstimate per piece via EstimatePrice.
+// A per-piece failure leaves that piece's estimate null instead of failing
+// the whole response.
+func enrichPiecesWithEstimates(client *ai.Client, pieces []outfitPiece, condition string) {
+	for i := range pieces {
+		raw, err := client.EstimatePrice(pieces[i].Label, pieces[i].Category, condition)
+		if err != nil {
+			continue
+		}
+		est, err := parseEstimate(raw)
+		if err != nil {
+			continue
+		}
+		pieces[i].PriceEstimate = &est
+	}
+}
+
 // parsePieces decodes the Magic Tag JSON, applies the same sanitize rules
 // as POST /v1/analyze (category allowlist, label trim/max 80, box bounds),
 // and maps to the honest MCP output shape. Pure: unit-testable.
@@ -253,12 +326,15 @@ func parsePieces(raw string, maxPieces int) ([]outfitPiece, error) {
 				continue
 			}
 		}
+		links := buildPieceLinks(label)
 		out = append(out, outfitPiece{
 			Category:    p.Category,
 			Label:       label,
 			Description: label,
+			Brand:       ai.SanitizeBrand(p.Brand),
 			Price:       nil,
-			Links:       buildPieceLinks(label),
+			Links:       links,
+			Sources:     pieceSources(links),
 		})
 		if len(out) >= maxPieces {
 			break

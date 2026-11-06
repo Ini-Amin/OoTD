@@ -55,6 +55,17 @@ func TestBuildStylistSystemPromptInjectionStaysQuoted(t *testing.T) {
 	}
 }
 
+func TestMagicTagSystemPromptAsksHonestBrand(t *testing.T) {
+	if !strings.Contains(MagicTagSystemPrompt, `"brand"`) {
+		t.Fatal("prompt pieces shape must include a brand field")
+	}
+	for _, want := range []string{"ONLY if a logo/wordmark", "else null", "never guess a brand"} {
+		if !strings.Contains(MagicTagSystemPrompt, want) {
+			t.Fatalf("prompt missing honesty rule %q", want)
+		}
+	}
+}
+
 func TestStylistClosetBlockSkipsUnsafeCategory(t *testing.T) {
 	got := StylistClosetBlock([]ClosetPiece{
 		{Category: "top", Label: "Good tee"},

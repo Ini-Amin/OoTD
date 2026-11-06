@@ -148,8 +148,8 @@ func (c *Client) AnalyzeOutfit(imgURL string) (string, error) {
 }
 
 // EstimatePrice asks the chat model for an IDR price range for one garment.
-// It returns the raw model text; parsing/validation lives with the caller
-// (api/cmd/mcp/estimate.go) so the honesty gate stays in one place.
+// It returns the raw model text; parsing/validation lives in ParseEstimate
+// (internal/ai/estimate.go) so the honesty gate stays in one place.
 // Label/category/condition must already be normalized by the caller.
 func (c *Client) EstimatePrice(label, category, condition string) (string, error) {
 	if c.chatModel == "" {

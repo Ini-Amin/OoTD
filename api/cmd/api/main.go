@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/ootd/ootd-api/internal/ai"
 	"github.com/ootd/ootd-api/internal/httpapi"
 	"github.com/ootd/ootd-api/migrations"
 )
@@ -46,6 +47,8 @@ func main() {
 	if origin == "" {
 		origin = "http://localhost:5173"
 	}
+
+	go httpapi.RunIngestWorker(ctx, pool, ai.NewClientFromEnv(), httpapi.IngestWorkerIntervalFromEnv())
 
 	server := &http.Server{
 		Addr:    ":" + port,
